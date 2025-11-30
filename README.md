@@ -8,6 +8,10 @@ A project inspired by:
 - [mouseless](https://youtu.be/J0rwQVNQkHM?si=v2O7zazIbpw5QAaJ)
 - [neverclick](https://www.youtube.com/watch?v=7fGB-hjc2Gc&t=2h00m55s)
 
+# Resources used to help me build this project
+
+- [wayland-book](https://wayland-book.com/introduction.html)
+
 # Please view only
 
 This project is available for **viewing only**.

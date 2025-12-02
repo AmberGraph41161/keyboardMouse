@@ -13,16 +13,20 @@ A project inspired by:
 - [wayland-book](https://wayland-book.com/introduction.html) for helping me get started on anything wayland client related
 - [Learn Wayland by writing a GUI from scratch](https://gaultier.github.io/blog/wayland_from_scratch.html#what-do-we-need) for helping me start understanding the wayland protocol
 - [wayland explorer](https://wayland.app/protocols/) for libwayland documentation
+- [wayland documentation](https://people.collabora.com/~mvlad/wayland_hawkmoth/index.html) similar help as wayland explorer
     - [ext-image-copy-capture-v1](https://wayland.app/protocols/ext-image-copy-capture-v1)
     - [wlr-layer-shell-unstable-v1](https://wayland.app/protocols/wlr-layer-shell-unstable-v1)
 - [grim](https://gitlab.freedesktop.org/emersion/grim) for showing me how to do zwlr_screencopy_manager_v1 stuff
 - [tofi](https://github.com/philj56/tofi) and [fuzzel](https://codeberg.org/dnkl/fuzzel) for showing me how to draw things wayland-client related
 - [YouTube](https://www.youtube.com/)
-    - [Wayland client basics How to natively speak Wayland in your application, from the bottom up](https://www.youtube.com/watch?v=KbryyNrMYl4)
-    - [Writing a Wayland client from scratch! How hard can it be? [minimal native Application]](https://www.youtube.com/watch?v=lw4P1Oup5LQ)
-    - [Our wayland client actually works!](https://www.youtube.com/watch?v=13ubS803Q_8)
-    - [zero to window - wayland client](https://youtu.be/iIVIu7YRdY0?si=5fj2aMNweNgjqxED)
-    - [How the heck does wayland work?](https://www.youtube.com/watch?v=m39KIio5lL4)
+    - Wayland related
+        - [Wayland client basics How to natively speak Wayland in your application, from the bottom up](https://www.youtube.com/watch?v=KbryyNrMYl4)
+        - [Writing a Wayland client from scratch! How hard can it be? [minimal native Application]](https://www.youtube.com/watch?v=lw4P1Oup5LQ)
+        - [Our wayland client actually works!](https://www.youtube.com/watch?v=13ubS803Q_8)
+        - [zero to window - wayland client](https://youtu.be/iIVIu7YRdY0?si=5fj2aMNweNgjqxED)
+        - [How the heck does wayland work?](https://www.youtube.com/watch?v=m39KIio5lL4)
+    - OpenCV related
+        - [Object Detection using HSV Color Space [C++/OpenCV]](https://www.youtube.com/watch?v=vIrmMAib7Go)
 
 # Please view only
 

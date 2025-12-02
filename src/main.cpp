@@ -5,6 +5,10 @@
 #include <cstdint>
 #include <cstring>
 
+#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv4/opencv2/core.hpp>
+#include <opencv4/opencv2/highgui.hpp>
+
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
@@ -161,48 +165,6 @@ const zwlr_screencopy_frame_v1_listener screenCopyFrameListener =
 	.failed = screenCopyFrameHandleFailed
 };
 
-wl_buffer* drawFrame(WaylandState* waylandState)
-{
-	waylandState->handledBuffer = false;
-
-	const int width = 1920;
-	const int height = 1080;
-	const int stride = width * 4;
-	const int shm_pool_size = height * stride * 2;
-
-	int waylandSharedMemoryPoolFileDescriptor = allocate_shm_file(shm_pool_size);
-	if(waylandSharedMemoryPoolFileDescriptor == -1)
-	{
-		return NULL;
-	}
-
-	uint8_t *pool_data = static_cast<uint8_t*>(mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, waylandSharedMemoryPoolFileDescriptor, 0));
-	if(pool_data == MAP_FAILED)
-	{
-		close(waylandSharedMemoryPoolFileDescriptor);
-		return NULL;
-	}
-
-	wl_shm_pool *pool = wl_shm_create_pool(waylandState->sharedMemory, waylandSharedMemoryPoolFileDescriptor, shm_pool_size);
-
-	int index = 0;
-	int offset = height * stride * index;
-	waylandState->buffer = wl_shm_pool_create_buffer(pool, offset, width, height, stride, WL_SHM_FORMAT_XRGB8888);
-	wl_shm_pool_destroy(pool);
-	close(waylandSharedMemoryPoolFileDescriptor);
-
-	waylandState->frame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
-	zwlr_screencopy_frame_v1_add_listener(waylandState->frame, &screenCopyFrameListener, waylandState);
-	while(!waylandState->handledBuffer)
-	{
-		wl_display_dispatch(waylandState->display);
-	}
-
-	munmap(pool_data, shm_pool_size);
-
-	return waylandState->buffer;
-}
-
 void outputHandleGeometry
 (
 	void *data,
@@ -270,6 +232,62 @@ const struct wl_output_listener outputListener = {
 	.name = outputHandleName,
 	.description = outputHandleDescription,
 };
+
+wl_buffer* drawFrame(WaylandState* waylandState)
+{
+	waylandState->handledBuffer = false;
+
+	const int width = 1920;
+	const int height = 1080;
+	const int stride = width * 4;
+	const int shm_pool_size = height * stride;
+
+	int waylandSharedMemoryPoolFileDescriptor = allocate_shm_file(shm_pool_size);
+	if(waylandSharedMemoryPoolFileDescriptor == -1)
+	{
+		return NULL;
+	}
+
+	uint8_t *pool_data = static_cast<uint8_t*>(mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, waylandSharedMemoryPoolFileDescriptor, 0));
+	if(pool_data == MAP_FAILED)
+	{
+		close(waylandSharedMemoryPoolFileDescriptor);
+		return NULL;
+	}
+
+	wl_shm_pool *pool = wl_shm_create_pool(waylandState->sharedMemory, waylandSharedMemoryPoolFileDescriptor, shm_pool_size);
+
+	int index = 0;
+	int offset = height * stride * index;
+	waylandState->buffer = wl_shm_pool_create_buffer(pool, offset, width, height, stride, WL_SHM_FORMAT_XRGB8888);
+	wl_shm_pool_destroy(pool);
+	close(waylandSharedMemoryPoolFileDescriptor);
+
+	waylandState->frame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
+	zwlr_screencopy_frame_v1_add_listener(waylandState->frame, &screenCopyFrameListener, waylandState);
+	while(!waylandState->handledBuffer)
+	{
+		wl_display_dispatch(waylandState->display);
+	}
+
+	//note:
+	//WL_SHM_FORMAT_XRGB8888 == CV_8UC4
+	//cv::Scalar is in BGR format, NOT RGB
+	cv::Mat originalMat(height, width, CV_8UC4, pool_data, stride);
+	cv::Mat grayMat(originalMat);
+	cv::cvtColor(grayMat, grayMat, cv::COLOR_BGR2GRAY);
+	cv::threshold(grayMat, grayMat, 100, 255, cv::THRESH_BINARY);
+	std::vector<std::vector<cv::Point>> contours;
+	cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+	for(size_t x = 0; x < contours.size(); ++x)
+	{
+		cv::Rect boundingRect = cv::boundingRect(contours[x]);
+		cv::rectangle(originalMat, boundingRect.tl(), boundingRect.br(), cv::Scalar(10, 10, 255), 1);
+	}
+
+	munmap(pool_data, shm_pool_size);
+	return waylandState->buffer;
+}
 
 void xdgSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial)
 {

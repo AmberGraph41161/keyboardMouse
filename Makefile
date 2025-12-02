@@ -1,5 +1,5 @@
 CXXFLAGS := -Wall -std=c++17
-CXXLINKLIBS := -lwayland-client
+CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc
 
 main: build/main.o build/xdg-shell.o build/wlr-screencopy-unstable-v1.o
 	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^

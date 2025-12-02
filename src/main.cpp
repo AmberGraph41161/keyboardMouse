@@ -94,9 +94,9 @@ struct WaylandState
 	xdg_wm_base* xdgWmBase;
 
 	zwlr_screencopy_manager_v1* screenCopyManager;
-	zwlr_screencopy_frame_v1* frame;
+	zwlr_screencopy_frame_v1* screenCopyFrame;
 	uint32_t screenCopyFlags;
-	bool handledBuffer;
+	bool screenCopyBufferWasHandled;
 	char* outputName;
 	int32_t fallbackX;
 	int32_t fallbackY;
@@ -147,7 +147,7 @@ void screenCopyFrameHandleReady
 )
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	waylandState->handledBuffer = true;
+	waylandState->screenCopyBufferWasHandled = true;
 }
 
 void screenCopyFrameHandleFailed(void *data, zwlr_screencopy_frame_v1 *frame)
@@ -235,7 +235,7 @@ const struct wl_output_listener outputListener = {
 
 wl_buffer* drawFrame(WaylandState* waylandState)
 {
-	waylandState->handledBuffer = false;
+	waylandState->screenCopyBufferWasHandled = false;
 
 	const int width = 1920;
 	const int height = 1080;
@@ -260,12 +260,13 @@ wl_buffer* drawFrame(WaylandState* waylandState)
 	int index = 0;
 	int offset = height * stride * index;
 	waylandState->buffer = wl_shm_pool_create_buffer(pool, offset, width, height, stride, WL_SHM_FORMAT_XRGB8888);
+	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, NULL);
 	wl_shm_pool_destroy(pool);
 	close(waylandSharedMemoryPoolFileDescriptor);
 
-	waylandState->frame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
-	zwlr_screencopy_frame_v1_add_listener(waylandState->frame, &screenCopyFrameListener, waylandState);
-	while(!waylandState->handledBuffer)
+	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
+	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
+	while(!waylandState->screenCopyBufferWasHandled)
 	{
 		wl_display_dispatch(waylandState->display);
 	}
@@ -469,8 +470,55 @@ int main()
 	close(keyboardFileDescriptor);
 	*/
 
-	wl_buffer_add_listener(waylandState.buffer, &waylandBufferListener, NULL);
-	wl_display_disconnect(waylandState.display);
+	if(waylandState.output)
+	{
+		wl_output_destroy(waylandState.output);
+	}
+	if(waylandState.registry)
+	{
+		wl_registry_destroy(waylandState.registry);
+	}
+	if(waylandState.compositor)
+	{
+		wl_compositor_destroy(waylandState.compositor);
+	}
+	if(waylandState.sharedMemory)
+	{
+		wl_shm_destroy(waylandState.sharedMemory);
+	}
+	if(waylandState.surface)
+	{
+		wl_surface_destroy(waylandState.surface);
+	}
+	if(waylandState.buffer)
+	{
+		wl_buffer_destroy(waylandState.buffer);
+	}
+	if(waylandState.xdgSurface)
+	{
+		xdg_surface_destroy(waylandState.xdgSurface);
+	}
+	if(waylandState.xdgTopLevel)
+	{
+		xdg_toplevel_destroy(waylandState.xdgTopLevel);
+	}
+	if(waylandState.xdgWmBase)
+	{
+		xdg_wm_base_destroy(waylandState.xdgWmBase);
+	}
+	if(waylandState.screenCopyManager)
+	{
+		zwlr_screencopy_manager_v1_destroy(waylandState.screenCopyManager);
+	}
+	if(waylandState.screenCopyFrame)
+	{
+		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
+	}
 
+	if(waylandState.display)
+	{
+		//must be called last!
+		wl_display_disconnect(waylandState.display);
+	}
 	return 0;
 }

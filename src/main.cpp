@@ -294,6 +294,26 @@ wl_buffer* drawFrame(WaylandState* waylandState)
 	return waylandState->buffer;
 }
 
+void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time); //header needed
+const wl_callback_listener layerSurfaceCallbackListener =
+{
+	.done = layerSurfaceCallback
+};
+
+void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
+{
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	wl_callback_destroy(callback);
+
+	callback = wl_surface_frame(waylandState->surface);
+	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
+
+	wl_buffer* buffer = drawFrame(waylandState);
+	wl_surface_attach(waylandState->surface, buffer, 0, 0);
+	wl_surface_damage_buffer(waylandState->surface, 0, 0, 1920, 1080);
+	wl_surface_commit(waylandState->surface);
+}
+
 void layerSurfaceConfigure
 (
 	void* data,
@@ -435,6 +455,9 @@ int main()
 	const int layerSurfacePaddingLeft = 0;
 	zwlr_layer_surface_v1_set_margin(waylandState.layerSurface, layerSurfacePaddingTop, layerSurfacePaddingRight, layerSurfacePaddingBottom, layerSurfacePaddingLeft);
 	wl_surface_commit(waylandState.surface);
+
+	//wl_callback* callback = wl_surface_frame(waylandState.surface);
+	//wl_callback_add_listener(callback, &layerSurfaceCallbackListener, &waylandState);
 
 	while(!waylandState.layerSurfaceShouldClose && wl_display_dispatch(waylandState.display) != -1)
 	{

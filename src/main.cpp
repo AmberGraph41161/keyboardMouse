@@ -12,7 +12,7 @@
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
-#include "xdg-shell.h"
+#include "wlr-layer-shell-unstable-v1.h"
 #include "wlr-screencopy-unstable-v1.h"
 
 #include <cstdio>
@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/input.h>
+#include <linux/input-event-codes.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -89,9 +90,12 @@ struct WaylandState
 	wl_surface* surface;
 	wl_buffer* buffer;
 
-	xdg_surface* xdgSurface;
-	xdg_toplevel* xdgTopLevel;
-	xdg_wm_base* xdgWmBase;
+	zwlr_layer_shell_v1* layerShell;
+	zwlr_layer_surface_v1* layerSurface;
+	bool layerSurfaceShouldClose;
+
+	wl_seat* seat;
+	wl_keyboard* keyboard;
 
 	zwlr_screencopy_manager_v1* screenCopyManager;
 	zwlr_screencopy_frame_v1* screenCopyFrame;
@@ -118,8 +122,8 @@ const wl_buffer_listener waylandBufferListener =
 
 void screenCopyFrameHandleBuffer
 (
-	void *data,
-	zwlr_screencopy_frame_v1 *frame,
+	void* data,
+	zwlr_screencopy_frame_v1* frame,
 	uint32_t format,
 	uint32_t width,
 	uint32_t height,
@@ -131,7 +135,7 @@ void screenCopyFrameHandleBuffer
 	zwlr_screencopy_frame_v1_copy(frame, waylandState->buffer);
 }
 
-void screenCopyFrameHandleFlags(void *data, zwlr_screencopy_frame_v1 *frame, uint32_t flags)
+void screenCopyFrameHandleFlags(void* data, zwlr_screencopy_frame_v1* frame, uint32_t flags)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->screenCopyFlags = flags;
@@ -139,8 +143,8 @@ void screenCopyFrameHandleFlags(void *data, zwlr_screencopy_frame_v1 *frame, uin
 
 void screenCopyFrameHandleReady
 (
-	void *data,
-	zwlr_screencopy_frame_v1 *frame,
+	void* data,
+	zwlr_screencopy_frame_v1* frame,
 	uint32_t tv_sec_hi,
 	uint32_t tv_sec_lo,
 	uint32_t tv_nsec
@@ -150,7 +154,7 @@ void screenCopyFrameHandleReady
 	waylandState->screenCopyBufferWasHandled = true;
 }
 
-void screenCopyFrameHandleFailed(void *data, zwlr_screencopy_frame_v1 *frame)
+void screenCopyFrameHandleFailed(void* data, zwlr_screencopy_frame_v1* frame)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	fprintf(stderr, "failed to copy output %s\n", waylandState->outputName);
@@ -167,15 +171,15 @@ const zwlr_screencopy_frame_v1_listener screenCopyFrameListener =
 
 void outputHandleGeometry
 (
-	void *data,
-	wl_output *wl_output,
+	void* data,
+	wl_output* wl_output,
 	int32_t x,
 	int32_t y,
 	int32_t physical_width,
 	int32_t physical_height,
 	int32_t subpixel,
-	const char *make,
-	const char *model,
+	const char* make,
+	const char* model,
 	int32_t transform
 )
 {
@@ -187,8 +191,8 @@ void outputHandleGeometry
 
 void outputHandleMode
 (
-	void *data,
-	wl_output *wl_output,
+	void* data,
+	wl_output* wl_output,
 	uint32_t flags,
 	int32_t width,
 	int32_t height,
@@ -203,23 +207,23 @@ void outputHandleMode
 	}
 }
 
-void outputHandleDone(void *data, wl_output *wl_output) {
+void outputHandleDone(void* data, wl_output* wl_output) {
 	// No-op
 }
 
-void outputHandleScale(void *data, wl_output *wl_output, int32_t factor)
+void outputHandleScale(void* data, wl_output* wl_output, int32_t factor)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->scale = factor;
 }
 
-void outputHandleName(void *data, wl_output *wl_output, const char *name)
+void outputHandleName(void* data, wl_output* wl_output, const char* name)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->outputName = strdup(name);
 }
 
-void outputHandleDescription(void *data, wl_output *wl_output, const char *description)
+void outputHandleDescription(void* data, wl_output* wl_output, const char* description)
 {
 	// No-op
 }
@@ -290,29 +294,77 @@ wl_buffer* drawFrame(WaylandState* waylandState)
 	return waylandState->buffer;
 }
 
-void xdgSurfaceConfigure(void* data, xdg_surface* xdgSurface, uint32_t serial)
+void layerSurfaceConfigure
+(
+	void* data,
+	zwlr_layer_surface_v1* layerSurface,
+	uint32_t serial,
+	uint32_t width,
+	uint32_t height
+)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	xdg_surface_ack_configure(xdgSurface, serial);
+	zwlr_layer_surface_v1_ack_configure(layerSurface, serial);
 
 	wl_buffer* buffer = drawFrame(waylandState);
 	wl_surface_attach(waylandState->surface, buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
 }
 
-const xdg_surface_listener xdgSurfaceListener =
+void layerSurfaceClosed(void* data, zwlr_layer_surface_v1* layerSurface)
 {
-	.configure  = xdgSurfaceConfigure
-};
-
-void xdgWmBasePing(void *data, xdg_wm_base *xdg_wm_base, uint32_t serial)
-{
-	xdg_wm_base_pong(xdg_wm_base, serial);
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	waylandState->layerSurfaceShouldClose = true;
 }
 
-const xdg_wm_base_listener xdgWmBaseListener =
+const zwlr_layer_surface_v1_listener layerSurfaceListener =
 {
-	.ping = xdgWmBasePing,
+	.configure = layerSurfaceConfigure,
+	.closed = layerSurfaceClosed
+};
+
+void waylandKeyboardHandleKeymap(void* data, wl_keyboard* keyboard, uint32_t format, int fd, uint32_t size)
+{
+}
+void waylandKeyboardHandleEnter(void* data, wl_keyboard* keyboard, uint32_t serial, wl_surface* surface, wl_array* keys)
+{
+}
+void waylandKeyboardHandleLeave(void* data, wl_keyboard* keyboard, uint32_t serial, wl_surface* surface)
+{
+}
+
+void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+{
+	//note: key matches up with evdev keycodes
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+
+	if(state == WL_KEYBOARD_KEY_STATE_PRESSED)
+	{
+		switch(key)
+		{
+			case KEY_ESC:
+				waylandState->layerSurfaceShouldClose = true;
+			break;
+		}
+		std::cout << key << std::endl;
+	}
+}
+
+void waylandKeyboardHandleModifiers(void* data, wl_keyboard* keyboard, uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group)
+{
+}
+void waylandKeyboardHandleRepeatInfo(void* data, wl_keyboard* keyboard, int32_t rate, int32_t delay)
+{
+}
+
+const wl_keyboard_listener waylandKeyboardListener =
+{
+	.keymap = waylandKeyboardHandleKeymap,
+	.enter = waylandKeyboardHandleEnter,
+	.leave = waylandKeyboardHandleLeave,
+	.key = waylandKeyboardHandleKey,
+	.modifiers = waylandKeyboardHandleModifiers,
+	.repeat_info = waylandKeyboardHandleRepeatInfo
 };
 
 void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
@@ -329,10 +381,14 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 		waylandState->scale = 1;
 		waylandState->output = static_cast<wl_output*>(wl_registry_bind(registry, name, &wl_output_interface, version));
 		wl_output_add_listener(waylandState->output, &outputListener, waylandState);
-	} else if(strcmp(interface, xdg_wm_base_interface.name) == 0)
+	} else if(strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0)
 	{
-		waylandState->xdgWmBase = static_cast<xdg_wm_base*>(wl_registry_bind(registry, name, &xdg_wm_base_interface, 1));
-		xdg_wm_base_add_listener(waylandState->xdgWmBase, &xdgWmBaseListener, waylandState);
+		waylandState->layerShell = static_cast<zwlr_layer_shell_v1*>(wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, version));
+	} else if(strcmp(interface, wl_seat_interface.name) == 0)
+	{
+		waylandState->seat = static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, version));
+		waylandState->keyboard = wl_seat_get_keyboard(waylandState->seat);
+		wl_keyboard_add_listener(waylandState->keyboard, &waylandKeyboardListener, waylandState);
 	} else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0)
 	{
 		waylandState->screenCopyManager = static_cast<zwlr_screencopy_manager_v1*>(wl_registry_bind(registry, name, &zwlr_screencopy_manager_v1_interface, 1));
@@ -366,22 +422,23 @@ int main()
 	wl_display_roundtrip(waylandState.display); //fetch globals
 	wl_display_roundtrip(waylandState.display); //process globals
 
+	waylandState.layerSurfaceShouldClose = false;
 	waylandState.surface = wl_compositor_create_surface(waylandState.compositor);
-	waylandState.xdgSurface = xdg_wm_base_get_xdg_surface(waylandState.xdgWmBase, waylandState.surface);
-	xdg_surface_add_listener(waylandState.xdgSurface, &xdgSurfaceListener, &waylandState);
-	waylandState.xdgTopLevel = xdg_surface_get_toplevel(waylandState.xdgSurface);
-	xdg_toplevel_set_title(waylandState.xdgTopLevel, "Example client");
+	waylandState.layerSurface = zwlr_layer_shell_v1_get_layer_surface(waylandState.layerShell, waylandState.surface, waylandState.output, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "keyboardMouseOverlay");
+	zwlr_layer_surface_v1_set_keyboard_interactivity(waylandState.layerSurface, true);
+	zwlr_layer_surface_v1_add_listener(waylandState.layerSurface, &layerSurfaceListener, &waylandState);
+	zwlr_layer_surface_v1_set_size(waylandState.layerSurface, 1920, 1080);
+	zwlr_layer_surface_v1_set_anchor(waylandState.layerSurface, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+	const int layerSurfacePaddingTop = -21;
+	const int layerSurfacePaddingRight = 0;
+	const int layerSurfacePaddingBottom = 0;
+	const int layerSurfacePaddingLeft = 0;
+	zwlr_layer_surface_v1_set_margin(waylandState.layerSurface, layerSurfacePaddingTop, layerSurfacePaddingRight, layerSurfacePaddingBottom, layerSurfacePaddingLeft);
 	wl_surface_commit(waylandState.surface);
 
-	int counter = 0;
-	while(wl_display_dispatch(waylandState.display) != -1)
+	while(!waylandState.layerSurfaceShouldClose && wl_display_dispatch(waylandState.display) != -1)
 	{
-		++counter;
-		std::cout << counter << std::endl;
-		if(counter >= 30)
-		{
-			break;
-		}
+		std::cout << "running!" << std::endl;
 	}
 
 	/*
@@ -494,17 +551,13 @@ int main()
 	{
 		wl_buffer_destroy(waylandState.buffer);
 	}
-	if(waylandState.xdgSurface)
+	if(waylandState.layerShell)
 	{
-		xdg_surface_destroy(waylandState.xdgSurface);
+		zwlr_layer_shell_v1_destroy(waylandState.layerShell);
 	}
-	if(waylandState.xdgTopLevel)
+	if(waylandState.layerSurface)
 	{
-		xdg_toplevel_destroy(waylandState.xdgTopLevel);
-	}
-	if(waylandState.xdgWmBase)
-	{
-		xdg_wm_base_destroy(waylandState.xdgWmBase);
+		zwlr_layer_surface_v1_destroy(waylandState.layerSurface);
 	}
 	if(waylandState.screenCopyManager)
 	{

@@ -86,10 +86,23 @@ struct WaylandState
 	wl_registry* registry;
 	wl_compositor* compositor;
 
-	wl_shm* sharedMemory;
 	wl_surface* surface;
 	wl_buffer* buffer;
 
+	uint32_t sharedMemoryWidth;
+	uint32_t sharedMemoryHeight;
+	uint32_t sharedMemoryStride;
+
+	wl_shm* sharedMemory;
+	int sharedMemoryPoolFileDescriptor;
+	uint8_t *sharedMemoryPoolData;
+	wl_shm_pool *sharedMemoryPool;
+	int sharedMemoryPoolSize;
+
+	int layerSurfacePaddingTop = -21;
+	int layerSurfacePaddingRight = 0;
+	int layerSurfacePaddingBottom = 0;
+	int layerSurfacePaddingLeft = 0;
 	zwlr_layer_shell_v1* layerShell;
 	zwlr_layer_surface_v1* layerSurface;
 	bool layerSurfaceShouldClose;
@@ -112,7 +125,8 @@ struct WaylandState
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
 {
-	wl_buffer_destroy(buffer);
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	wl_buffer_destroy(waylandState->buffer);
 }
 
 const wl_buffer_listener waylandBufferListener =
@@ -237,36 +251,50 @@ const struct wl_output_listener outputListener = {
 	.description = outputHandleDescription,
 };
 
-wl_buffer* drawFrame(WaylandState* waylandState)
+void drawTransparentFrame(WaylandState* waylandState)
+{
+	int index = 0;
+	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
+	wl_buffer_destroy(waylandState->buffer);
+	waylandState->buffer = wl_shm_pool_create_buffer
+	(
+		waylandState->sharedMemoryPool,
+		offset,
+		waylandState->sharedMemoryWidth,
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryStride,
+		WL_SHM_FORMAT_ARGB8888
+	);
+	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
+
+	uint32_t* pixels = reinterpret_cast<uint32_t*>(&waylandState->sharedMemoryPoolData[0]);
+	uint32_t transparent = 0x00000000; //ARGB
+	for(int y = 0; y < waylandState->sharedMemoryHeight; ++y)
+	{
+		for(int x = 0; x < waylandState->sharedMemoryWidth; ++x)
+		{
+			pixels[y * waylandState->sharedMemoryWidth + x] = transparent;
+		}
+	}
+}
+
+void drawFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
 
-	const int width = 1920;
-	const int height = 1080;
-	const int stride = width * 4;
-	const int shm_pool_size = height * stride;
-
-	int waylandSharedMemoryPoolFileDescriptor = allocate_shm_file(shm_pool_size);
-	if(waylandSharedMemoryPoolFileDescriptor == -1)
-	{
-		return NULL;
-	}
-
-	uint8_t *pool_data = static_cast<uint8_t*>(mmap(NULL, shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, waylandSharedMemoryPoolFileDescriptor, 0));
-	if(pool_data == MAP_FAILED)
-	{
-		close(waylandSharedMemoryPoolFileDescriptor);
-		return NULL;
-	}
-
-	wl_shm_pool *pool = wl_shm_create_pool(waylandState->sharedMemory, waylandSharedMemoryPoolFileDescriptor, shm_pool_size);
-
 	int index = 0;
-	int offset = height * stride * index;
-	waylandState->buffer = wl_shm_pool_create_buffer(pool, offset, width, height, stride, WL_SHM_FORMAT_XRGB8888);
-	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, NULL);
-	wl_shm_pool_destroy(pool);
-	close(waylandSharedMemoryPoolFileDescriptor);
+	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
+	wl_buffer_destroy(waylandState->buffer);
+	waylandState->buffer = wl_shm_pool_create_buffer
+	(
+		waylandState->sharedMemoryPool,
+		offset,
+		waylandState->sharedMemoryWidth,
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryStride,
+		WL_SHM_FORMAT_XRGB8888
+	);
+	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
 	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
 	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
@@ -276,9 +304,16 @@ wl_buffer* drawFrame(WaylandState* waylandState)
 	}
 
 	//note:
-	//WL_SHM_FORMAT_XRGB8888 == CV_8UC4
+	//WL_SHM_FORMAT_ARGB8888 == CV_8UC4
 	//cv::Scalar is in BGR format, NOT RGB
-	cv::Mat originalMat(height, width, CV_8UC4, pool_data, stride);
+	cv::Mat originalMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData,
+		waylandState->sharedMemoryStride
+	);
 	cv::Mat grayMat(originalMat);
 	cv::cvtColor(grayMat, grayMat, cv::COLOR_BGR2GRAY);
 	cv::threshold(grayMat, grayMat, 100, 255, cv::THRESH_BINARY);
@@ -289,9 +324,6 @@ wl_buffer* drawFrame(WaylandState* waylandState)
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
 		cv::rectangle(originalMat, boundingRect.tl(), boundingRect.br(), cv::Scalar(10, 10, 255), 1);
 	}
-
-	munmap(pool_data, shm_pool_size);
-	return waylandState->buffer;
 }
 
 void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time); //header needed
@@ -302,14 +334,23 @@ const wl_callback_listener layerSurfaceCallbackListener =
 
 void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
 {
+	static bool flipFlop = false;
+
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	wl_callback_destroy(callback);
 
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
-	wl_buffer* buffer = drawFrame(waylandState);
-	wl_surface_attach(waylandState->surface, buffer, 0, 0);
+	if(flipFlop)
+	{
+		drawFrame(waylandState);
+	} else
+	{
+		drawTransparentFrame(waylandState);
+	}
+	flipFlop = !flipFlop;
+	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_damage_buffer(waylandState->surface, 0, 0, 1920, 1080);
 	wl_surface_commit(waylandState->surface);
 }
@@ -326,8 +367,59 @@ void layerSurfaceConfigure
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	zwlr_layer_surface_v1_ack_configure(layerSurface, serial);
 
-	wl_buffer* buffer = drawFrame(waylandState);
-	wl_surface_attach(waylandState->surface, buffer, 0, 0);
+	waylandState->sharedMemoryWidth = width;
+	waylandState->sharedMemoryHeight = height;
+	waylandState->sharedMemoryStride = width * 4;
+
+	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
+
+	waylandState->sharedMemoryPoolFileDescriptor = allocate_shm_file(waylandState->sharedMemoryPoolSize);
+	if(waylandState->sharedMemoryPoolFileDescriptor == -1)
+	{
+		exit(EXIT_FAILURE);
+	}
+
+	waylandState->sharedMemoryPoolData = static_cast<uint8_t*>
+	(
+		mmap
+		(
+			NULL,
+			waylandState->sharedMemoryPoolSize,
+			PROT_READ | PROT_WRITE,
+			MAP_SHARED,
+			waylandState->sharedMemoryPoolFileDescriptor,
+			0
+		)
+	);
+
+	if(waylandState->sharedMemoryPoolData == MAP_FAILED)
+	{
+		close(waylandState->sharedMemoryPoolFileDescriptor);
+		exit(EXIT_FAILURE);
+	}
+
+	waylandState->sharedMemoryPool = wl_shm_create_pool
+	(
+		waylandState->sharedMemory,
+		waylandState->sharedMemoryPoolFileDescriptor,
+		waylandState->sharedMemoryPoolSize
+	);
+
+	int index = 0;
+	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
+	waylandState->buffer = wl_shm_pool_create_buffer
+	(
+		waylandState->sharedMemoryPool,
+		offset,
+		waylandState->sharedMemoryWidth,
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryStride,
+		WL_SHM_FORMAT_XRGB8888
+	);
+	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
+
+	drawFrame(waylandState);
+	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
 }
 
@@ -449,15 +541,11 @@ int main()
 	zwlr_layer_surface_v1_add_listener(waylandState.layerSurface, &layerSurfaceListener, &waylandState);
 	zwlr_layer_surface_v1_set_size(waylandState.layerSurface, 1920, 1080);
 	zwlr_layer_surface_v1_set_anchor(waylandState.layerSurface, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
-	const int layerSurfacePaddingTop = -21;
-	const int layerSurfacePaddingRight = 0;
-	const int layerSurfacePaddingBottom = 0;
-	const int layerSurfacePaddingLeft = 0;
-	zwlr_layer_surface_v1_set_margin(waylandState.layerSurface, layerSurfacePaddingTop, layerSurfacePaddingRight, layerSurfacePaddingBottom, layerSurfacePaddingLeft);
+	zwlr_layer_surface_v1_set_margin(waylandState.layerSurface, waylandState.layerSurfacePaddingTop, waylandState.layerSurfacePaddingRight, waylandState.layerSurfacePaddingBottom, waylandState.layerSurfacePaddingLeft);
 	wl_surface_commit(waylandState.surface);
 
-	//wl_callback* callback = wl_surface_frame(waylandState.surface);
-	//wl_callback_add_listener(callback, &layerSurfaceCallbackListener, &waylandState);
+	wl_callback* callback = wl_surface_frame(waylandState.surface);
+	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, &waylandState);
 
 	while(!waylandState.layerSurfaceShouldClose && wl_display_dispatch(waylandState.display) != -1)
 	{
@@ -590,6 +678,10 @@ int main()
 	{
 		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
 	}
+
+	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
+	close(waylandState.sharedMemoryPoolFileDescriptor);
+	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
 
 	if(waylandState.display)
 	{

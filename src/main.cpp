@@ -1,10 +1,11 @@
 #include <iostream>
-#include <filesystem>
 #include <chrono>
 #include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 #include <opencv4/opencv2/core/types.hpp>
 #include <opencv4/opencv2/core.hpp>
@@ -17,19 +18,16 @@
 #include "wlr-screencopy-unstable-v1.h"
 #include "wlr-virtual-pointer-unstable-v1.h"
 
-#include <cstdio>
-#include <cstdlib>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/input.h>
-#include <linux/input-event-codes.h>
-
+#include <time.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
+#include <libinput.h>
+#include <libudev.h>
+#include <linux/input.h>
+#include <linux/input-event-codes.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
 
 void randname(char* buf)
 {
@@ -126,7 +124,6 @@ struct WaylandState
 	bool layerSurfaceShouldClose;
 
 	wl_seat* seat;
-	wl_keyboard* keyboard;
 	wl_region* region;
 
 	zwlr_screencopy_manager_v1* screenCopyManager;
@@ -137,7 +134,6 @@ struct WaylandState
 	zwlr_virtual_pointer_manager_v1* virtualPointerManager;
 	zwlr_virtual_pointer_v1* virtualPointer;
 	uint32_t virtualPointerTime = 0;
-	unsigned int buttonDownDelayMilliseconds = 20;
 	bool shouldClickAndExit = false;
 
 	int openCVBoundingRectCentersCursor = 0;
@@ -464,101 +460,83 @@ const zwlr_layer_surface_v1_listener layerSurfaceListener =
 	.closed = layerSurfaceClosed
 };
 
-void waylandKeyboardHandleKeymap(void* data, wl_keyboard* keyboard, uint32_t format, int fd, uint32_t size)
+void virtualPointerLeftDown(WaylandState& waylandState)
 {
-}
-void waylandKeyboardHandleEnter(void* data, wl_keyboard* keyboard, uint32_t serial, wl_surface* surface, wl_array* keys)
-{
-}
-void waylandKeyboardHandleLeave(void* data, wl_keyboard* keyboard, uint32_t serial, wl_surface* surface)
-{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
 }
 
-void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+void virtualPointerLeftUp(WaylandState& waylandState)
 {
-	//note: key matches up with evdev keycodes
-	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+void virtualPointerLeftClick(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
 
-	std::string command;
-	if(state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED)
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+void virtualPointerRightDown(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+void virtualPointerRightUp(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+void virtualPointerRightClick(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+int libinputOpenRestricted(const char* path, int flags, void* data)
+{
+	int fileDescriptor = open(path, flags);
+	if(fileDescriptor < 0)
 	{
-		switch(key)
-		{
-			case KEY_ESC:
-				waylandState->layerSurfaceShouldClose = true;
-				break;
-
-			case KEY_L:
-			{
-				++waylandState->openCVBoundingRectCentersCursor;
-				if(waylandState->openCVBoundingRectCentersCursor >= waylandState->openCVBoundingRectCenters.size())
-				{
-					waylandState->openCVBoundingRectCentersCursor = 0;
-				}
-
-				zwlr_virtual_pointer_v1_motion_absolute
-				(
-					waylandState->virtualPointer,
-					waylandState->virtualPointerTime,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y,
-					waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
-					waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
-				);
-				++waylandState->virtualPointerTime;
-				zwlr_virtual_pointer_v1_frame(waylandState->virtualPointer);
-				wl_display_flush(waylandState->display);
-				break;
-			}
-
-			case KEY_H:
-			{
-				--waylandState->openCVBoundingRectCentersCursor;
-				if(waylandState->openCVBoundingRectCentersCursor < 0)
-				{
-					waylandState->openCVBoundingRectCentersCursor = waylandState->openCVBoundingRectCenters.size() - 1;
-				}
-				zwlr_virtual_pointer_v1_motion_absolute
-				(
-					waylandState->virtualPointer,
-					waylandState->virtualPointerTime,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y,
-					waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
-					waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
-				);
-				++waylandState->virtualPointerTime;
-				zwlr_virtual_pointer_v1_frame(waylandState->virtualPointer);
-				wl_display_flush(waylandState->display);
-				break;
-			}
-
-			case KEY_SPACE:
-			{
-				waylandState->shouldClickAndExit = true;
-				break;
-			}
-		}
-	} else if(state == WL_KEYBOARD_KEY_STATE_RELEASED)
-	{
+		std::cerr << "failed to open fileDescriptor" << std::endl;
 	}
+
+	return fileDescriptor;
 }
 
-void waylandKeyboardHandleModifiers(void* data, wl_keyboard* keyboard, uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked, uint32_t group)
+void libinputCloseRestricted(int fileDescriptor, void* data)
 {
-}
-void waylandKeyboardHandleRepeatInfo(void* data, wl_keyboard* keyboard, int32_t rate, int32_t delay)
-{
+	close(fileDescriptor);
 }
 
-const wl_keyboard_listener waylandKeyboardListener =
+const libinput_interface libinputInterface =
 {
-	.keymap = waylandKeyboardHandleKeymap,
-	.enter = waylandKeyboardHandleEnter,
-	.leave = waylandKeyboardHandleLeave,
-	.key = waylandKeyboardHandleKey,
-	.modifiers = waylandKeyboardHandleModifiers,
-	.repeat_info = waylandKeyboardHandleRepeatInfo
+	.open_restricted = libinputOpenRestricted,
+	.close_restricted = libinputCloseRestricted
 };
 
 void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
@@ -580,8 +558,6 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 	} else if(strcmp(interface, wl_seat_interface.name) == 0)
 	{
 		waylandState->seat = static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, version));
-		waylandState->keyboard = wl_seat_get_keyboard(waylandState->seat);
-		wl_keyboard_add_listener(waylandState->keyboard, &waylandKeyboardListener, waylandState);
 	} else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0)
 	{
 		waylandState->screenCopyManager = static_cast<zwlr_screencopy_manager_v1*>(wl_registry_bind(registry, name, &zwlr_screencopy_manager_v1_interface, 1));
@@ -644,7 +620,7 @@ int main()
 		ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
 		"keyboardMouseOverlay"
 	);
-	zwlr_layer_surface_v1_set_keyboard_interactivity(waylandState.layerSurface, true);
+	zwlr_layer_surface_v1_set_keyboard_interactivity(waylandState.layerSurface, false);
 	zwlr_layer_surface_v1_set_exclusive_zone(waylandState.layerSurface, -1); //allows surface to sit on top of waybar
 	zwlr_layer_surface_v1_add_listener(waylandState.layerSurface, &layerSurfaceListener, &waylandState);
 	zwlr_layer_surface_v1_set_size
@@ -672,6 +648,26 @@ int main()
 	wl_surface_commit(waylandState.surface);
 	wl_display_flush(waylandState.display);
 
+	udev* udevContext = udev_new();
+	if(!udevContext)
+	{
+		std::cerr << "failed to create udevContext" << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
+	libinput* libinputContext = libinput_udev_create_context(&libinputInterface, NULL, udevContext);
+	if(!libinputContext)
+	{
+		std::cerr << "failed to create libinputContext" << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
+	if(libinput_udev_assign_seat(libinputContext, "seat0") != 0)
+	{
+		std::cerr << "failed to assign seat0" << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
 	while
 	(
 		!waylandState.layerSurfaceShouldClose &&
@@ -679,105 +675,107 @@ int main()
 		wl_display_dispatch(waylandState.display) != -1
 	)
 	{
-		//std::cout << "running!" << std::endl;
-	}
-
-	/*
-	std::vector<std::filesystem::path> devicesPaths;
-	for
-	(
-		std::filesystem::directory_iterator it("/dev/input/");
-		it != std::filesystem::directory_iterator{};
-		++it
-	)
-	{
-		std::filesystem::directory_entry entry = *(it);
-		devicesPaths.push_back(entry.path());
-	}
-
-	std::cout << "select device:" << std::endl;
-	for(int x = 0; x < devicesPaths.size(); ++x)
-	{
-		int fileDescriptor = open(devicesPaths[x].c_str(), O_RDONLY);
-		if(fileDescriptor == -1)
+		libinput_dispatch(libinputContext);
+		libinput_event* libinputEvent;
+		while((libinputEvent = libinput_get_event(libinputContext)))
 		{
-			++x;
-			continue;
-		}
-		char deviceName[256];
-		if(ioctl(fileDescriptor, EVIOCGNAME(sizeof(deviceName)), deviceName) == -1)
-		{
-			++x;
-			continue;
-		}
-
-		std::cout << x << ") " << deviceName << ' ' << devicesPaths[x] << std::endl;
-	}
-	std::cout << "> ";
-
-	int chosenDeviceIndex;
-	try
-	{
-		std::string getlinestring;
-		std::getline(std::cin, getlinestring);
-		chosenDeviceIndex = std::stoi(getlinestring);
-	} catch(...)
-	{
-		chosenDeviceIndex = 0;
-	}
-
-	int keyboardFileDescriptor = open(devicesPaths[chosenDeviceIndex].c_str(), O_RDONLY);
-	if(keyboardFileDescriptor == -1)
-	{
-		perror("Something went wrong while opening device...");
-		exit(EXIT_FAILURE);
-	}
-
-	input_event inputEvent;
-	while(true)
-	{
-		ssize_t readSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
-		if(readSize == (ssize_t)(-1))
-		{
-			perror("Error reading input device inputEvent!");
-			break;
-		}
-
-		if(readSize == (ssize_t)(0))
-		{
-			std::cout << "nothing read. EOF maybe?" << std::endl;
-			break;
-		}
-
-		if(inputEvent.type == EV_KEY)
-		{
-			if(inputEvent.value == 1)
+			libinput_event_type libinputEventType = libinput_event_get_type(libinputEvent);
+			if(libinputEventType == LIBINPUT_EVENT_KEYBOARD_KEY)
 			{
-				std::cout << inputEvent.code << " pressed!" << std::endl;
-				if(inputEvent.code == KEY_A)
+				libinput_event_keyboard* libinputEventKeyboard = libinput_event_get_keyboard_event(libinputEvent); //owned by libinputEvent, thus freed also when libinputEvent freed.
+				uint32_t key = libinput_event_keyboard_get_key(libinputEventKeyboard);
+				libinput_key_state libinputKeyState = libinput_event_keyboard_get_key_state(libinputEventKeyboard);
+
+				std::cout << key << ' ';
+				if(libinputKeyState == LIBINPUT_KEY_STATE_PRESSED)
 				{
-					break;
+					switch(key)
+					{
+						case KEY_ESC:
+							waylandState.layerSurfaceShouldClose = true;
+							break;
+
+						case KEY_L:
+						{
+							++waylandState.openCVBoundingRectCentersCursor;
+							if(waylandState.openCVBoundingRectCentersCursor >= waylandState.openCVBoundingRectCenters.size())
+							{
+								waylandState.openCVBoundingRectCentersCursor = 0;
+							}
+
+							zwlr_virtual_pointer_v1_motion_absolute
+							(
+								waylandState.virtualPointer,
+								waylandState.virtualPointerTime,
+								waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].x,
+								waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].y,
+								waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+								waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+							);
+							++waylandState.virtualPointerTime;
+							zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+							wl_display_flush(waylandState.display);
+							break;
+						}
+
+						case KEY_H:
+						{
+							--waylandState.openCVBoundingRectCentersCursor;
+							if(waylandState.openCVBoundingRectCentersCursor < 0)
+							{
+								waylandState.openCVBoundingRectCentersCursor = waylandState.openCVBoundingRectCenters.size() - 1;
+							}
+							zwlr_virtual_pointer_v1_motion_absolute
+							(
+								waylandState.virtualPointer,
+								waylandState.virtualPointerTime,
+								waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].x,
+								waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].y,
+								waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+								waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+							);
+							++waylandState.virtualPointerTime;
+							zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+							wl_display_flush(waylandState.display);
+							break;
+						}
+
+						case KEY_A:
+						{
+							//waylandState.shouldClickAndExit = true;
+							virtualPointerLeftDown(waylandState);
+							break;
+						}
+						case KEY_D:
+						{
+							virtualPointerRightDown(waylandState);
+							break;
+						}
+					}
+				} else if(libinputKeyState == LIBINPUT_KEY_STATE_RELEASED)
+				{
+					switch(key)
+					{
+						case KEY_A:
+						{
+							virtualPointerLeftUp(waylandState);
+							break;
+						}
+						case KEY_D:
+						{
+							virtualPointerRightUp(waylandState);
+							break;
+						}
+					}
 				}
-			} else
-			{
-				std::cout << inputEvent.code << " released!" << std::endl;
 			}
 		}
+		libinput_event_destroy(libinputEvent);
 	}
-
-	close(keyboardFileDescriptor);
-	*/
-
+	libinput_unref(libinputContext);
+	udev_unref(udevContext);
 
 
-
-	if(!waylandState.outputs.empty())
-	{
-		for(size_t x = 0; x < waylandState.outputs.size(); ++x)
-		{
-			wl_output_destroy(waylandState.outputs[x]);
-		}
-	}
 	if(waylandState.registry)
 	{
 		wl_registry_destroy(waylandState.registry);
@@ -785,6 +783,13 @@ int main()
 	if(waylandState.compositor)
 	{
 		wl_compositor_destroy(waylandState.compositor);
+	}
+	if(!waylandState.outputs.empty())
+	{
+		for(size_t x = 0; x < waylandState.outputs.size(); ++x)
+		{
+			wl_output_destroy(waylandState.outputs[x]);
+		}
 	}
 	if(waylandState.sharedMemory)
 	{
@@ -806,6 +811,14 @@ int main()
 	{
 		zwlr_layer_surface_v1_destroy(waylandState.layerSurface);
 	}
+	if(waylandState.seat)
+	{
+		wl_seat_destroy(waylandState.seat);
+	}
+	if(waylandState.region)
+	{
+		wl_region_destroy(waylandState.region);
+	}
 	if(waylandState.screenCopyManager)
 	{
 		zwlr_screencopy_manager_v1_destroy(waylandState.screenCopyManager);
@@ -814,38 +827,6 @@ int main()
 	{
 		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
 	}
-	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
-	close(waylandState.sharedMemoryPoolFileDescriptor);
-	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
-	if(waylandState.seat)
-	{
-		wl_seat_destroy(waylandState.seat);
-	}
-	if(waylandState.keyboard)
-	{
-		wl_keyboard_destroy(waylandState.keyboard);
-	}
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
-	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
-	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
-	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
-	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
 	if(waylandState.virtualPointerManager)
 	{
 		zwlr_virtual_pointer_manager_v1_destroy(waylandState.virtualPointerManager);
@@ -854,10 +835,10 @@ int main()
 	{
 		zwlr_virtual_pointer_v1_destroy(waylandState.virtualPointer);
 	}
-	if(waylandState.region)
-	{
-		wl_region_destroy(waylandState.region);
-	}
+
+	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
+	close(waylandState.sharedMemoryPoolFileDescriptor);
+	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
 
 	if(waylandState.display)
 	{

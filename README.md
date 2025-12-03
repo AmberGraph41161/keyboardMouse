@@ -16,6 +16,7 @@ A project inspired by:
 - [wayland documentation](https://people.collabora.com/~mvlad/wayland_hawkmoth/index.html) similar help as wayland explorer
     - [ext-image-copy-capture-v1](https://wayland.app/protocols/ext-image-copy-capture-v1)
     - [wlr-layer-shell-unstable-v1](https://wayland.app/protocols/wlr-layer-shell-unstable-v1)
+    - [wlr-virtual-pointer-unstable-v1 (wlroots virtual pointer example)](https://git.nixnet.services/blankie/wlroots/src/commit/2382684e942c7361197306862984de5598f7fc30/examples/virtual-pointer.c)
 - [grim](https://gitlab.freedesktop.org/emersion/grim) for showing me how to do zwlr_screencopy_manager_v1 stuff
 - [tofi](https://github.com/philj56/tofi) and [fuzzel](https://codeberg.org/dnkl/fuzzel) for showing me how to draw things wayland-client related
 - [YouTube](https://www.youtube.com/)

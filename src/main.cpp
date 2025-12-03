@@ -1,6 +1,6 @@
-#include <chrono>
 #include <iostream>
 #include <filesystem>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <cstdint>
@@ -15,6 +15,7 @@
 #include <wayland-client.h>
 #include "wlr-layer-shell-unstable-v1.h"
 #include "wlr-screencopy-unstable-v1.h"
+#include "wlr-virtual-pointer-unstable-v1.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -47,7 +48,7 @@ int create_shm_file()
 	int retries = 100;
 	do
 	{
-		char name[] = "/wl_shm-XXXXXX";
+	char name[] = "/wl_shm-XXXXXX";
 		randname(name + sizeof(name) - 7);
 		--retries;
 		int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
@@ -80,12 +81,27 @@ int allocate_shm_file(size_t size)
 	return fd;
 }
 
+struct Dimension
+{
+	Dimension(uint32_t width, uint32_t height) : width(width), height(height) {}
+	uint32_t width = 0;
+	uint32_t height = 0;
+};
+
 struct WaylandState
 {
-	wl_output* output;
 	wl_display* display;
 	wl_registry* registry;
 	wl_compositor* compositor;
+	
+	std::vector<wl_output*> outputs;
+	std::vector<std::string> outputNames;
+	std::vector<Dimension> outputsDimensions;
+	std::vector<int32_t> outputsFallbackX;
+	std::vector<int32_t> outputsFallbackY;
+	std::vector<int32_t> outputsTransform;
+	std::vector<int32_t> outputsScale;
+	int selectedOutputIndex = 0;
 
 	wl_surface* surface;
 	wl_buffer* buffer;
@@ -100,7 +116,8 @@ struct WaylandState
 	wl_shm_pool *sharedMemoryPool;
 	int sharedMemoryPoolSize;
 
-	int layerSurfacePaddingTop = -21;
+	//int layerSurfacePaddingTop = -21;
+	int layerSurfacePaddingTop = 0;
 	int layerSurfacePaddingRight = 0;
 	int layerSurfacePaddingBottom = 0;
 	int layerSurfacePaddingLeft = 0;
@@ -110,18 +127,18 @@ struct WaylandState
 
 	wl_seat* seat;
 	wl_keyboard* keyboard;
+	wl_region* region;
 
 	zwlr_screencopy_manager_v1* screenCopyManager;
 	zwlr_screencopy_frame_v1* screenCopyFrame;
 	uint32_t screenCopyFlags;
 	bool screenCopyBufferWasHandled;
-	char* outputName;
-	int32_t fallbackX;
-	int32_t fallbackY;
-	int32_t transform;
-	int32_t modeWidth;
-	int32_t modeHeight;
-	int32_t scale;
+
+	zwlr_virtual_pointer_manager_v1* virtualPointerManager;
+	zwlr_virtual_pointer_v1* virtualPointer;
+	uint32_t virtualPointerTime = 0;
+	unsigned int buttonDownDelayMilliseconds = 20;
+	bool shouldClickAndExit = false;
 
 	int openCVBoundingRectCentersCursor = 0;
 	std::vector<cv::Point> openCVBoundingRectCenters;
@@ -179,7 +196,7 @@ void screenCopyFrameHandleReady
 void screenCopyFrameHandleFailed(void* data, zwlr_screencopy_frame_v1* frame)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	fprintf(stderr, "failed to copy output %s\n", waylandState->outputName);
+	fprintf(stderr, "failed to copy output %s\n", waylandState->outputNames[waylandState->selectedOutputIndex].c_str());
 	exit(EXIT_FAILURE);
 }
 
@@ -206,9 +223,20 @@ void outputHandleGeometry
 )
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	waylandState->fallbackX = x;
-	waylandState->fallbackY = y;
-	waylandState->transform = transform;
+	waylandState->outputsFallbackX.emplace_back(x);
+	waylandState->outputsFallbackY.emplace_back(y);
+	waylandState->outputsTransform.emplace_back(transform);
+
+	std::cout << "output geometry handle!" << std::endl;
+	std::cout << "wl_output " << wl_output << '\n' <<
+	"int32_t x " << x << '\n' <<
+	"int32_t y " << y << '\n' <<
+	"int32_t physical_width " << physical_width << '\n' <<
+	"int32_t physical_height " << physical_height << '\n' <<
+	"int32_t subpixel " << subpixel << '\n' <<
+	"const char* make " << make << '\n' <<
+	"const char* model " << model << '\n' <<
+	"int32_t transform " << transform << '\n' << std::endl;
 }
 
 void outputHandleMode
@@ -224,9 +252,15 @@ void outputHandleMode
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 
 	if ((flags & WL_OUTPUT_MODE_CURRENT) != 0) {
-		waylandState->modeWidth = width;
-		waylandState->modeHeight = height;
+		waylandState->outputsDimensions.emplace_back(Dimension(width, height));
 	}
+
+	std::cout << "output mode handle!" << std::endl;
+	std::cout << "wl_output* wl_output " << wl_output << '\n' <<
+	"uint32_t flags " << flags << '\n' <<
+	"int32_t width " << width << '\n' <<
+	"int32_t height " << height << '\n' <<
+	"int32_t refresh " << refresh << '\n' << std::endl;
 }
 
 void outputHandleDone(void* data, wl_output* wl_output) {
@@ -236,18 +270,28 @@ void outputHandleDone(void* data, wl_output* wl_output) {
 void outputHandleScale(void* data, wl_output* wl_output, int32_t factor)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	waylandState->scale = factor;
+	waylandState->outputsScale.emplace_back(factor);
+
+	std::cout << "output scale handle!" << '\n' <<
+	"void* data " << data << '\n' <<
+	"wl_output* wl_output " << wl_output << '\n' <<
+	"int32_t factor " << factor << '\n' << std::endl;
 }
 
 void outputHandleName(void* data, wl_output* wl_output, const char* name)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	waylandState->outputName = strdup(name);
+	waylandState->outputNames.emplace_back(std::string(name));
+
+	std::cout << "output name handle!" << '\n' <<
+	"const char* name " << name << '\n' << std::endl;
 }
 
 void outputHandleDescription(void* data, wl_output* wl_output, const char* description)
 {
 	// No-op
+	std::cout << "output description handle!" << '\n' <<
+	"const char* description " << description << '\n' << std::endl;
 }
 
 const struct wl_output_listener outputListener = {
@@ -263,7 +307,12 @@ void drawFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
 
-	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
+	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output
+	(
+		waylandState->screenCopyManager,
+		false,
+		waylandState->outputs[waylandState->selectedOutputIndex]
+	);
 	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
 	while(!waylandState->screenCopyBufferWasHandled)
 	{
@@ -290,13 +339,19 @@ void drawFrame(WaylandState* waylandState)
 	for(size_t x = 0; x < contours.size(); ++x)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
+		std::cout << "boundingRect.tl().x " << boundingRect.tl().x << std::endl;
+		std::cout << "boundingRect.tl().y " << boundingRect.tl().y << std::endl;
+
 		waylandState->openCVBoundingRectCenters.emplace_back
 		(
+			cv::Point(boundingRect.tl())
+			/*
 			cv::Point
 			(
-				boundingRect.br().x - boundingRect.tl().x,
-				boundingRect.br().y - boundingRect.tl().y
+				boundingRect.br().x - (boundingRect.tl().x / 2),
+				boundingRect.br().y - (boundingRect.tl().y / 2)
 			)
+			*/
 		);
 		cv::rectangle
 		(
@@ -425,13 +480,14 @@ void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 
 	std::string command;
-	if(state == WL_KEYBOARD_KEY_STATE_PRESSED)
+	if(state == WL_KEYBOARD_KEY_STATE_PRESSED || state == WL_KEYBOARD_KEY_STATE_REPEATED)
 	{
 		switch(key)
 		{
 			case KEY_ESC:
 				waylandState->layerSurfaceShouldClose = true;
 				break;
+
 			case KEY_L:
 			{
 				++waylandState->openCVBoundingRectCentersCursor;
@@ -440,21 +496,21 @@ void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial
 					waylandState->openCVBoundingRectCentersCursor = 0;
 				}
 
-				/*
-				waylandState->mouse->moveAbsolute
+				zwlr_virtual_pointer_v1_motion_absolute
 				(
+					waylandState->virtualPointer,
+					waylandState->virtualPointerTime,
 					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y,
+					waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
+					waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
 				);
-				*/
-				command =
-					"./mouse " +
-					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x) +
-					' ' +
-					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y);
-				system(command.c_str());
+				++waylandState->virtualPointerTime;
+				zwlr_virtual_pointer_v1_frame(waylandState->virtualPointer);
+				wl_display_flush(waylandState->display);
 				break;
 			}
+
 			case KEY_H:
 			{
 				--waylandState->openCVBoundingRectCentersCursor;
@@ -462,19 +518,24 @@ void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial
 				{
 					waylandState->openCVBoundingRectCentersCursor = waylandState->openCVBoundingRectCenters.size() - 1;
 				}
-				/*
-				waylandState->mouse->moveAbsolute
+				zwlr_virtual_pointer_v1_motion_absolute
 				(
+					waylandState->virtualPointer,
+					waylandState->virtualPointerTime,
 					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
-					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y,
+					waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
+					waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
 				);
-				*/
-				command =
-					"./mouse " +
-					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x) +
-					' ' +
-					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y);
-				system(command.c_str());
+				++waylandState->virtualPointerTime;
+				zwlr_virtual_pointer_v1_frame(waylandState->virtualPointer);
+				wl_display_flush(waylandState->display);
+				break;
+			}
+
+			case KEY_SPACE:
+			{
+				waylandState->shouldClickAndExit = true;
 				break;
 			}
 		}
@@ -511,9 +572,8 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 		waylandState->sharedMemory = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, version));
 	} else if(strcmp(interface, wl_output_interface.name) == 0)
 	{
-		waylandState->scale = 1;
-		waylandState->output = static_cast<wl_output*>(wl_registry_bind(registry, name, &wl_output_interface, version));
-		wl_output_add_listener(waylandState->output, &outputListener, waylandState);
+		waylandState->outputs.emplace_back(static_cast<wl_output*>(wl_registry_bind(registry, name, &wl_output_interface, version)));
+		wl_output_add_listener(waylandState->outputs.back(), &outputListener, waylandState);
 	} else if(strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0)
 	{
 		waylandState->layerShell = static_cast<zwlr_layer_shell_v1*>(wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, version));
@@ -525,6 +585,9 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 	} else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0)
 	{
 		waylandState->screenCopyManager = static_cast<zwlr_screencopy_manager_v1*>(wl_registry_bind(registry, name, &zwlr_screencopy_manager_v1_interface, 1));
+	} else if(strcmp(interface, zwlr_virtual_pointer_manager_v1_interface.name) == 0)
+	{
+		waylandState->virtualPointerManager = static_cast<zwlr_virtual_pointer_manager_v1*>(wl_registry_bind(registry, name, &zwlr_virtual_pointer_manager_v1_interface, version));
 	}
 }
 
@@ -535,7 +598,7 @@ void waylandRegistryHandleGlobalRemove(void* data, wl_registry* registry, uint32
 
 int main()
 {
-	WaylandState waylandState = { 0 };
+	WaylandState waylandState;
 
 	waylandState.display = wl_display_connect(getenv("WAYLAND_DISPLAY"));
 	if(!waylandState.display)
@@ -555,20 +618,66 @@ int main()
 	wl_display_roundtrip(waylandState.display); //fetch globals
 	wl_display_roundtrip(waylandState.display); //process globals
 
+	waylandState.virtualPointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(waylandState.virtualPointerManager, waylandState.seat);
+	if(waylandState.virtualPointer == nullptr)
+	{
+		std::cout << "null!" << std::endl;
+	}
+
+	const std::string targetMonitorName = "eDP-1";
+	for(size_t x = 0; x < waylandState.outputNames.size(); ++x)
+	{
+		if(waylandState.outputNames[x] == targetMonitorName)
+		{
+			waylandState.selectedOutputIndex = x;
+			break;
+		}
+	}
+
 	waylandState.layerSurfaceShouldClose = false;
 	waylandState.surface = wl_compositor_create_surface(waylandState.compositor);
-	waylandState.layerSurface = zwlr_layer_shell_v1_get_layer_surface(waylandState.layerShell, waylandState.surface, waylandState.output, ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "keyboardMouseOverlay");
+	waylandState.layerSurface = zwlr_layer_shell_v1_get_layer_surface
+	(
+		waylandState.layerShell,
+		waylandState.surface,
+		waylandState.outputs[waylandState.selectedOutputIndex],
+		ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
+		"keyboardMouseOverlay"
+	);
 	zwlr_layer_surface_v1_set_keyboard_interactivity(waylandState.layerSurface, true);
+	zwlr_layer_surface_v1_set_exclusive_zone(waylandState.layerSurface, -1); //allows surface to sit on top of waybar
 	zwlr_layer_surface_v1_add_listener(waylandState.layerSurface, &layerSurfaceListener, &waylandState);
-	zwlr_layer_surface_v1_set_size(waylandState.layerSurface, 1920, 1080);
+	zwlr_layer_surface_v1_set_size
+	(
+		waylandState.layerSurface,
+		waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+		waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+	);
 	zwlr_layer_surface_v1_set_anchor(waylandState.layerSurface, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
-	zwlr_layer_surface_v1_set_margin(waylandState.layerSurface, waylandState.layerSurfacePaddingTop, waylandState.layerSurfacePaddingRight, waylandState.layerSurfacePaddingBottom, waylandState.layerSurfacePaddingLeft);
-	wl_surface_commit(waylandState.surface);
+	zwlr_layer_surface_v1_set_margin
+	(
+		waylandState.layerSurface,
+		waylandState.layerSurfacePaddingTop,
+		waylandState.layerSurfacePaddingRight,
+		waylandState.layerSurfacePaddingBottom,
+		waylandState.layerSurfacePaddingLeft
+	);
 
 	wl_callback* callback = wl_surface_frame(waylandState.surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, &waylandState);
 
-	while(!waylandState.layerSurfaceShouldClose && wl_display_dispatch(waylandState.display) != -1)
+	waylandState.region = wl_compositor_create_region(waylandState.compositor);
+	wl_surface_set_input_region(waylandState.surface, waylandState.region);
+
+	wl_surface_commit(waylandState.surface);
+	wl_display_flush(waylandState.display);
+
+	while
+	(
+		!waylandState.layerSurfaceShouldClose &&
+		!waylandState.shouldClickAndExit &&
+		wl_display_dispatch(waylandState.display) != -1
+	)
 	{
 		//std::cout << "running!" << std::endl;
 	}
@@ -659,9 +768,15 @@ int main()
 	close(keyboardFileDescriptor);
 	*/
 
-	if(waylandState.output)
+
+
+
+	if(!waylandState.outputs.empty())
 	{
-		wl_output_destroy(waylandState.output);
+		for(size_t x = 0; x < waylandState.outputs.size(); ++x)
+		{
+			wl_output_destroy(waylandState.outputs[x]);
+		}
 	}
 	if(waylandState.registry)
 	{
@@ -699,10 +814,50 @@ int main()
 	{
 		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
 	}
-
 	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
 	close(waylandState.sharedMemoryPoolFileDescriptor);
 	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
+	if(waylandState.seat)
+	{
+		wl_seat_destroy(waylandState.seat);
+	}
+	if(waylandState.keyboard)
+	{
+		wl_keyboard_destroy(waylandState.keyboard);
+	}
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+	waylandState.virtualPointerTime += waylandState.buttonDownDelayMilliseconds;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	if(waylandState.virtualPointerManager)
+	{
+		zwlr_virtual_pointer_manager_v1_destroy(waylandState.virtualPointerManager);
+	}
+	if(waylandState.virtualPointer)
+	{
+		zwlr_virtual_pointer_v1_destroy(waylandState.virtualPointer);
+	}
+	if(waylandState.region)
+	{
+		wl_region_destroy(waylandState.region);
+	}
 
 	if(waylandState.display)
 	{

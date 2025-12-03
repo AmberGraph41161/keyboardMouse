@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <filesystem>
 #include <thread>
@@ -5,9 +6,9 @@
 #include <cstdint>
 #include <cstring>
 
-#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv4/opencv2/core/types.hpp>
 #include <opencv4/opencv2/core.hpp>
-#include <opencv4/opencv2/highgui.hpp>
+#include <opencv4/opencv2/imgproc.hpp>
 
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
@@ -121,6 +122,13 @@ struct WaylandState
 	int32_t modeWidth;
 	int32_t modeHeight;
 	int32_t scale;
+
+	int openCVBoundingRectCentersCursor = 0;
+	std::vector<cv::Point> openCVBoundingRectCenters;
+	cv::Scalar openCVRectangleScalar{0, 0, 255}; //BGR
+	int openCVRectangleThickness = 1;
+	double openCVThreshold = 140;
+	double openCVMaxval = 255;
 };
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
@@ -251,50 +259,9 @@ const struct wl_output_listener outputListener = {
 	.description = outputHandleDescription,
 };
 
-void drawTransparentFrame(WaylandState* waylandState)
-{
-	int index = 0;
-	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
-	wl_buffer_destroy(waylandState->buffer);
-	waylandState->buffer = wl_shm_pool_create_buffer
-	(
-		waylandState->sharedMemoryPool,
-		offset,
-		waylandState->sharedMemoryWidth,
-		waylandState->sharedMemoryHeight,
-		waylandState->sharedMemoryStride,
-		WL_SHM_FORMAT_ARGB8888
-	);
-	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
-
-	uint32_t* pixels = reinterpret_cast<uint32_t*>(&waylandState->sharedMemoryPoolData[0]);
-	uint32_t transparent = 0x00000000; //ARGB
-	for(int y = 0; y < waylandState->sharedMemoryHeight; ++y)
-	{
-		for(int x = 0; x < waylandState->sharedMemoryWidth; ++x)
-		{
-			pixels[y * waylandState->sharedMemoryWidth + x] = transparent;
-		}
-	}
-}
-
 void drawFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
-
-	int index = 0;
-	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
-	wl_buffer_destroy(waylandState->buffer);
-	waylandState->buffer = wl_shm_pool_create_buffer
-	(
-		waylandState->sharedMemoryPool,
-		offset,
-		waylandState->sharedMemoryWidth,
-		waylandState->sharedMemoryHeight,
-		waylandState->sharedMemoryStride,
-		WL_SHM_FORMAT_XRGB8888
-	);
-	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
 	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output(waylandState->screenCopyManager, false, waylandState->output);
 	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
@@ -304,7 +271,7 @@ void drawFrame(WaylandState* waylandState)
 	}
 
 	//note:
-	//WL_SHM_FORMAT_ARGB8888 == CV_8UC4
+	//WL_SHM_FORMAT_XRGB8888 == CV_8UC4
 	//cv::Scalar is in BGR format, NOT RGB
 	cv::Mat originalMat
 	(
@@ -316,13 +283,29 @@ void drawFrame(WaylandState* waylandState)
 	);
 	cv::Mat grayMat(originalMat);
 	cv::cvtColor(grayMat, grayMat, cv::COLOR_BGR2GRAY);
-	cv::threshold(grayMat, grayMat, 100, 255, cv::THRESH_BINARY);
+	cv::threshold(grayMat, grayMat, waylandState->openCVThreshold, waylandState->openCVMaxval, cv::THRESH_BINARY);
+
 	std::vector<std::vector<cv::Point>> contours;
 	cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 	for(size_t x = 0; x < contours.size(); ++x)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
-		cv::rectangle(originalMat, boundingRect.tl(), boundingRect.br(), cv::Scalar(10, 10, 255), 1);
+		waylandState->openCVBoundingRectCenters.emplace_back
+		(
+			cv::Point
+			(
+				boundingRect.br().x - boundingRect.tl().x,
+				boundingRect.br().y - boundingRect.tl().y
+			)
+		);
+		cv::rectangle
+		(
+			originalMat,
+			boundingRect.tl(),
+			boundingRect.br(),
+			waylandState->openCVRectangleScalar,
+			waylandState->openCVRectangleThickness
+		);
 	}
 }
 
@@ -334,24 +317,15 @@ const wl_callback_listener layerSurfaceCallbackListener =
 
 void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
 {
-	static bool flipFlop = false;
-
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	wl_callback_destroy(callback);
 
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
-	if(flipFlop)
-	{
-		drawFrame(waylandState);
-	} else
-	{
-		drawTransparentFrame(waylandState);
-	}
-	flipFlop = !flipFlop;
-	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
-	wl_surface_damage_buffer(waylandState->surface, 0, 0, 1920, 1080);
+	//drawFrame(waylandState);
+	//wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
+	wl_surface_damage_buffer(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);
 	wl_surface_commit(waylandState->surface);
 }
 
@@ -450,15 +424,62 @@ void waylandKeyboardHandleKey(void* data, wl_keyboard* keyboard, uint32_t serial
 	//note: key matches up with evdev keycodes
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 
+	std::string command;
 	if(state == WL_KEYBOARD_KEY_STATE_PRESSED)
 	{
 		switch(key)
 		{
 			case KEY_ESC:
 				waylandState->layerSurfaceShouldClose = true;
-			break;
+				break;
+			case KEY_L:
+			{
+				++waylandState->openCVBoundingRectCentersCursor;
+				if(waylandState->openCVBoundingRectCentersCursor >= waylandState->openCVBoundingRectCenters.size())
+				{
+					waylandState->openCVBoundingRectCentersCursor = 0;
+				}
+
+				/*
+				waylandState->mouse->moveAbsolute
+				(
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y
+				);
+				*/
+				command =
+					"./mouse " +
+					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x) +
+					' ' +
+					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y);
+				system(command.c_str());
+				break;
+			}
+			case KEY_H:
+			{
+				--waylandState->openCVBoundingRectCentersCursor;
+				if(waylandState->openCVBoundingRectCentersCursor < 0)
+				{
+					waylandState->openCVBoundingRectCentersCursor = waylandState->openCVBoundingRectCenters.size() - 1;
+				}
+				/*
+				waylandState->mouse->moveAbsolute
+				(
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x,
+					waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y
+				);
+				*/
+				command =
+					"./mouse " +
+					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].x) +
+					' ' +
+					std::to_string(waylandState->openCVBoundingRectCenters[waylandState->openCVBoundingRectCentersCursor].y);
+				system(command.c_str());
+				break;
+			}
 		}
-		std::cout << key << std::endl;
+	} else if(state == WL_KEYBOARD_KEY_STATE_RELEASED)
+	{
 	}
 }
 
@@ -549,7 +570,7 @@ int main()
 
 	while(!waylandState.layerSurfaceShouldClose && wl_display_dispatch(waylandState.display) != -1)
 	{
-		std::cout << "running!" << std::endl;
+		//std::cout << "running!" << std::endl;
 	}
 
 	/*

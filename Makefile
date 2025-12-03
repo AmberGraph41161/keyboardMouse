@@ -1,8 +1,8 @@
 CXXFLAGS := -Wall -std=c++17
-CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc
+CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc -lxkbcommon
 
-main: build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o
-	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^
+main: build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o mouse
+	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o
 
 build/main.o: src/main.cpp
 	clang++ $(CXXFLAGS) -c -o $@ $^
@@ -15,3 +15,15 @@ build/wlr-layer-shell-unstable-v1.o: src/wlr-layer-shell-unstable-v1.c
 
 build/wlr-screencopy-unstable-v1.o: src/wlr-screencopy-unstable-v1.c
 	clang -Wall -c -o $@ $^
+
+mouse: build/mouseRunner.o build/virtualInputDevice.o build/mouse.o
+	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^
+
+build/mouseRunner.o: src/mouseRunner.cpp
+	clang++ $(CXXFLAGS) -c -o $@ $^
+
+build/virtualInputDevice.o: src/virtualInputDevice.cpp
+	clang++ $(CXXFLAGS) -c -o $@ $^
+
+build/mouse.o: src/mouse.cpp
+	clang++ $(CXXFLAGS) -c -o $@ $^

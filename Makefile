@@ -22,3 +22,11 @@ build/wlr-virtual-pointer-unstable-v1.o: src/wlr-virtual-pointer-unstable-v1.c
 
 build/xdg-output-unstable-v1.o: src/xdg-output-unstable-v1.c
 	clang $(CFLAGS) -c -o $@ $^
+
+.PHONY: opencv
+opencv: testing/opencv.cpp
+	clang++ -Wall -std=c++17 -g -lopencv_core -lopencv_highgui -lopencv_imgcodecs -lopencv_imgproc -o opencv testing/opencv.cpp
+
+.PHONY: clean
+clean:
+	-rm build/*.o

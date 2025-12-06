@@ -31,6 +31,7 @@ A project inspired by:
         - [How the heck does wayland work?](https://www.youtube.com/watch?v=m39KIio5lL4)
     - OpenCV related
         - [Object Detection using HSV Color Space [C++/OpenCV]](https://www.youtube.com/watch?v=vIrmMAib7Go)
+        - [How I animate stuff on Desmos Graphing Calculator](https://www.youtube.com/watch?v=BQvBq3K50u8&t=4m21s) 
 
 # Please view only
 

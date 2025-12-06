@@ -151,8 +151,10 @@ struct WaylandState
 	std::vector<cv::Point> openCVBoundingRectCenters;
 	cv::Scalar openCVRectangleScalar{0, 0, 255}; //BGR
 	int openCVRectangleThickness = 1;
-	double openCVThreshold = 140;
-	double openCVMaxval = 255;
+	int openCVCannyLowerThreshold = 0;
+	int openCVCannyUpperThreshold = 255;
+	int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
+	bool openCVCannyL2Gradient = false;
 };
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
@@ -320,6 +322,73 @@ const zxdg_output_v1_listener xdgOutputListener =
 	.description = zxdgOutputHandleDescription
 };
 
+void incrementLetterCombination(std::string& letterCombination)
+{
+	if(letterCombination.size() == 0)
+	{
+		return;
+	}
+
+	for(size_t x = letterCombination.size() - 1; x >= 0; --x)
+	{
+		if(letterCombination[x] + 1 <= 'Z')
+		{
+			++letterCombination[x];
+			return;
+		} else
+		{
+			letterCombination[x] = 'A';
+		}
+	}
+}
+
+void nextScalarColor(cv::Scalar& scalar)
+{
+	//taken from https://github.com/AmberGraph41161/ncursesMinesweeper
+	const int incrementBy = 1;
+	if(scalar[2] == 255 && scalar[1] < 255 && scalar[0] == 0)
+	{
+		scalar[1] += incrementBy;
+	} else if(scalar[1] == 255 && scalar[2] > 0)
+	{
+		scalar[2] -= incrementBy;
+	} else if(scalar[1] == 255 && scalar[0] < 255)
+	{
+		scalar[0] += incrementBy;
+	} else if(scalar[0] == 255 && scalar[1] > 0)
+	{
+		scalar[1] -= incrementBy;
+	} else if(scalar[0] == 255 && scalar[2] < 255)
+	{
+		scalar[2] += incrementBy;
+	} else if(scalar[2] == 255 && scalar[0] > 0)
+	{
+		scalar[0] -= incrementBy;
+	}
+
+	if(scalar[0] > 255)
+	{
+		scalar[0] = 255;
+	} else if(scalar[0] < 0)
+	{
+		scalar[0] = 0;
+	}
+	if(scalar[1] > 255)
+	{
+		scalar[1] = 255;
+	} else if(scalar[1] < 0)
+	{
+		scalar[1] = 0;
+	}
+	if(scalar[2] > 255)
+	{
+		scalar[2] = 255;
+	} else if(scalar[2] < 0)
+	{
+		scalar[2] = 0;
+	}
+}
+
 void drawFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
@@ -349,32 +418,78 @@ void drawFrame(WaylandState* waylandState)
 	);
 	cv::Mat grayMat(originalMat);
 	cv::cvtColor(grayMat, grayMat, cv::COLOR_BGR2GRAY);
-	cv::threshold(grayMat, grayMat, waylandState->openCVThreshold, waylandState->openCVMaxval, cv::THRESH_BINARY);
+	cv::Canny
+	(
+		grayMat,
+		grayMat,
+		waylandState->openCVCannyLowerThreshold,
+		waylandState->openCVCannyUpperThreshold,
+		waylandState->openCVCannyApetureSize,
+		waylandState->openCVCannyL2Gradient
+	);
 
 	std::vector<std::vector<cv::Point>> contours;
 	cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+	std::vector<cv::Rect> boundingRects;
 	for(size_t x = 0; x < contours.size(); ++x)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
+		boundingRects.push_back(boundingRect);
 		waylandState->openCVBoundingRectCenters.emplace_back
 		(
-			cv::Point(boundingRect.tl())
-			/*
 			cv::Point
 			(
-				boundingRect.br().x - (boundingRect.tl().x / 2),
-				boundingRect.br().y - (boundingRect.tl().y / 2)
+				boundingRect.tl().x + ((boundingRect.br().x - boundingRect.tl().x) / 2),
+				boundingRect.tl().y + ((boundingRect.br().y - boundingRect.tl().y) / 2)
 			)
-			*/
 		);
+	}
+
+
+	for(size_t x = 0; x < boundingRects.size(); ++x)
+	{
+	}
+
+	int nLetterCombinations = 26;
+	int letterCombinationWidth = 1;
+	while(nLetterCombinations < boundingRects.size())
+	{
+		nLetterCombinations *= nLetterCombinations;
+		++letterCombinationWidth;
+	}
+	std::string letterCombinationString(letterCombinationWidth, 'A');
+
+	double fontScale = 0.5;
+	for(size_t x = 0; x < boundingRects.size(); ++x)
+	{
 		cv::rectangle
 		(
 			originalMat,
-			boundingRect.tl(),
-			boundingRect.br(),
+			boundingRects[x].tl(),
+			boundingRects[x].br(),
 			waylandState->openCVRectangleScalar,
 			waylandState->openCVRectangleThickness
 		);
+
+		cv::Point boundingRectBottomLeft
+		(
+			boundingRects[x].tl().x + waylandState->openCVRectangleThickness,
+			boundingRects[x].br().y - waylandState->openCVRectangleThickness
+		);
+
+		cv::putText
+		(
+			originalMat,
+			letterCombinationString,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			fontScale,
+			waylandState->openCVRectangleScalar
+		);
+
+		incrementLetterCombination(letterCombinationString);
+		nextScalarColor(waylandState->openCVRectangleScalar);
 	}
 }
 
@@ -417,8 +532,6 @@ void layerSurfaceConfigure
 	//waylandState->sharedMemoryWidth = waylandState->outputsDimensions[waylandState->selectedOutputIndex].width;
 	//waylandState->sharedMemoryHeight = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height;
 	//waylandState->sharedMemoryStride = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height * 4;
-
-	std::cout << width << ' ' << height << std::endl;
 
 	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
 

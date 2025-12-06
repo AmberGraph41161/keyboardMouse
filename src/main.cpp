@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map>
 
 #include <opencv4/opencv2/core/types.hpp>
 #include <opencv4/opencv2/core.hpp>
@@ -147,18 +148,23 @@ struct WaylandState
 	uint32_t virtualPointerYOrigin = 0;
 	bool shouldClickAndExit = false;
 
-	int openCVBoundingRectCentersCursor = 0;
-	std::vector<cv::Point> openCVBoundingRectCenters;
+	cv::Mat openCVInitialFrame;
 	cv::Scalar openCVRectangleScalar{0, 0, 255}; //BGR
 	int openCVRectangleThickness = 1;
 	int openCVCannyLowerThreshold = 0;
 	int openCVCannyUpperThreshold = 255;
 	int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
 	bool openCVCannyL2Gradient = false;
+
+	int letterCombinationsWidth = 1;
+	std::string userKeyboardInput = "";
+	std::unordered_map<std::string, cv::Point> letterCombinationsToPoints;
 };
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
 {
+
+	std::cout << "called" << std::endl;
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	wl_buffer_destroy(waylandState->buffer);
 }
@@ -389,7 +395,7 @@ void nextScalarColor(cv::Scalar& scalar)
 	}
 }
 
-void drawFrame(WaylandState* waylandState)
+void drawInitialFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
 
@@ -436,29 +442,19 @@ void drawFrame(WaylandState* waylandState)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
 		boundingRects.push_back(boundingRect);
-		waylandState->openCVBoundingRectCenters.emplace_back
-		(
-			cv::Point
-			(
-				boundingRect.tl().x + ((boundingRect.br().x - boundingRect.tl().x) / 2),
-				boundingRect.tl().y + ((boundingRect.br().y - boundingRect.tl().y) / 2)
-			)
-		);
 	}
-
 
 	for(size_t x = 0; x < boundingRects.size(); ++x)
 	{
 	}
 
 	int nLetterCombinations = 26;
-	int letterCombinationWidth = 1;
 	while(nLetterCombinations < boundingRects.size())
 	{
 		nLetterCombinations *= nLetterCombinations;
-		++letterCombinationWidth;
+		++waylandState->letterCombinationsWidth;
 	}
-	std::string letterCombinationString(letterCombinationWidth, 'A');
+	std::string letterCombinationString(waylandState->letterCombinationsWidth, 'A');
 
 	double fontScale = 0.5;
 	for(size_t x = 0; x < boundingRects.size(); ++x)
@@ -488,29 +484,45 @@ void drawFrame(WaylandState* waylandState)
 			waylandState->openCVRectangleScalar
 		);
 
+		waylandState->letterCombinationsToPoints[letterCombinationString] = cv::Point
+		(
+			boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
+			boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+		);
+
 		incrementLetterCombination(letterCombinationString);
 		nextScalarColor(waylandState->openCVRectangleScalar);
 	}
+
+	originalMat.copyTo(waylandState->openCVInitialFrame);
 }
 
-void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time); //header needed
-const wl_callback_listener layerSurfaceCallbackListener =
+void drawFrame(WaylandState* waylandState)
 {
-	.done = layerSurfaceCallback
-};
+	cv::Mat originalMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData,
+		waylandState->sharedMemoryStride
+	);
+	waylandState->openCVInitialFrame.copyTo(originalMat);
 
-void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
-{
-	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	wl_callback_destroy(callback);
-
-	callback = wl_surface_frame(waylandState->surface);
-	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
-
-	//drawFrame(waylandState);
-	//wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
-	wl_surface_damage_buffer(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);
-	wl_surface_commit(waylandState->surface);
+	cv::putText
+	(
+		originalMat,
+		waylandState->userKeyboardInput,
+		cv::Point
+		(
+			0, //waylandState->outputsDimensions[waylandState->selectedOutputIndex].width / 2,
+			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+		),
+		cv::FONT_HERSHEY_SIMPLEX,
+		10,
+		waylandState->openCVRectangleScalar,
+		30
+	);
 }
 
 void layerSurfaceConfigure
@@ -580,7 +592,7 @@ void layerSurfaceConfigure
 	);
 	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
-	drawFrame(waylandState);
+	drawInitialFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
 }
@@ -596,6 +608,26 @@ const zwlr_layer_surface_v1_listener layerSurfaceListener =
 	.configure = layerSurfaceConfigure,
 	.closed = layerSurfaceClosed
 };
+
+void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time); //header needed
+const wl_callback_listener layerSurfaceCallbackListener =
+{
+	.done = layerSurfaceCallback
+};
+
+void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
+{
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	wl_callback_destroy(callback);
+
+	callback = wl_surface_frame(waylandState->surface);
+	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
+
+	drawFrame(waylandState);
+	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
+	wl_surface_damage(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);
+	wl_surface_commit(waylandState->surface);
+}
 
 void virtualPointerMoveAbsolute(WaylandState& waylandState, uint32_t x, uint32_t y)
 {
@@ -727,6 +759,36 @@ void waylandRegistryHandleGlobalRemove(void* data, wl_registry* registry, uint32
 {
 	//"intentionally left blank"
 }
+
+std::unordered_map<uint32_t, char> inputEventCodeToAscii =
+{
+	{ KEY_A, 'A' },
+	{ KEY_B, 'B' },
+	{ KEY_C, 'C' },
+	{ KEY_D, 'D' },
+	{ KEY_E, 'E' },
+	{ KEY_F, 'F' },
+	{ KEY_G, 'G' },
+	{ KEY_H, 'H' },
+	{ KEY_I, 'I' },
+	{ KEY_J, 'J' },
+	{ KEY_K, 'K' },
+	{ KEY_L, 'L' },
+	{ KEY_M, 'M' },
+	{ KEY_N, 'N' },
+	{ KEY_O, 'O' },
+	{ KEY_P, 'P' },
+	{ KEY_Q, 'Q' },
+	{ KEY_R, 'R' },
+	{ KEY_S, 'S' },
+	{ KEY_T, 'T' },
+	{ KEY_U, 'U' },
+	{ KEY_V, 'V' },
+	{ KEY_W, 'W' },
+	{ KEY_X, 'X' },
+	{ KEY_Y, 'Y' },
+	{ KEY_Z, 'Z' },
+};
 
 int main()
 {
@@ -874,6 +936,7 @@ int main()
 							waylandState.layerSurfaceShouldClose = true;
 							break;
 
+						/*
 						case KEY_L:
 						{
 							++waylandState.openCVBoundingRectCentersCursor;
@@ -905,15 +968,46 @@ int main()
 							);
 							break;
 						}
+						*/
 
-						case KEY_A:
+						case KEY_LEFTSHIFT:
 						{
 							virtualPointerLeftDown(waylandState);
 							break;
 						}
-						case KEY_D:
+						case KEY_RIGHTSHIFT:
 						{
 							virtualPointerRightDown(waylandState);
+							break;
+						}
+
+						default:
+						{
+							waylandState.userKeyboardInput += inputEventCodeToAscii[key];
+							if
+							(
+								waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
+								(
+									waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
+									waylandState.letterCombinationsToPoints.count(waylandState.userKeyboardInput) == 0
+								) ||
+								inputEventCodeToAscii[key] < 'A' ||
+								inputEventCodeToAscii[key] > 'Z'
+							)
+							{
+								waylandState.userKeyboardInput.clear();
+								break;
+							}
+							if(waylandState.letterCombinationsToPoints.count(waylandState.userKeyboardInput))
+							{
+								virtualPointerMoveAbsolute
+								(
+									waylandState,
+									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToPoints.at(waylandState.userKeyboardInput).x,
+									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToPoints.at(waylandState.userKeyboardInput).y
+								);
+								waylandState.userKeyboardInput.clear();
+							}
 							break;
 						}
 					}
@@ -921,12 +1015,12 @@ int main()
 				{
 					switch(key)
 					{
-						case KEY_A:
+						case KEY_LEFTSHIFT:
 						{
 							virtualPointerLeftUp(waylandState);
 							break;
 						}
-						case KEY_D:
+						case KEY_RIGHTSHIFT:
 						{
 							virtualPointerRightUp(waylandState);
 							break;

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <array>
 #include <unordered_map>
 
 #include <opencv4/opencv2/core/types.hpp>
@@ -97,45 +98,47 @@ struct Position
 
 struct WaylandState
 {
-	wl_display* display;
-	wl_registry* registry;
-	wl_compositor* compositor;
+	wl_display* display = nullptr;
+	wl_registry* registry = nullptr;
+	wl_compositor* compositor = nullptr;
 	
 	std::vector<wl_output*> outputs;
 	std::vector<std::string> outputsNames;
 	std::vector<Dimension> outputsDimensions;
 	int selectedOutputIndex = 0;
 
-	zxdg_output_manager_v1* xdgOutputManager;
+	zxdg_output_manager_v1* xdgOutputManager = nullptr;
 	std::vector<Position> outputsPositions;
 
-	wl_surface* surface;
-	wl_buffer* buffer;
+	wl_surface* surface = nullptr;
+	wl_buffer* screenshotBuffer = nullptr;
+	wl_buffer* buffer = nullptr;
 
+	const uint32_t sharedMemoryNBuffers = 2;
 	uint32_t sharedMemoryWidth;
 	uint32_t sharedMemoryHeight;
 	uint32_t sharedMemoryStride;
-
-	wl_shm* sharedMemory;
+	wl_shm* sharedMemory = nullptr;
 	int sharedMemoryPoolFileDescriptor;
-	uint8_t *sharedMemoryPoolData;
-	wl_shm_pool *sharedMemoryPool;
-	int sharedMemoryPoolSize;
+	uint8_t *sharedMemoryPoolData = nullptr;
+	wl_shm_pool *sharedMemoryPool = nullptr;
+	uint32_t sharedMemoryPoolSize;
+	uint32_t sharedMemoryFrameSize;
 
 	//int layerSurfacePaddingTop = -21;
 	int layerSurfacePaddingTop = 0;
 	int layerSurfacePaddingRight = 0;
 	int layerSurfacePaddingBottom = 0;
 	int layerSurfacePaddingLeft = 0;
-	zwlr_layer_shell_v1* layerShell;
-	zwlr_layer_surface_v1* layerSurface;
+	zwlr_layer_shell_v1* layerShell = nullptr;
+	zwlr_layer_surface_v1* layerSurface = nullptr;
 	bool layerSurfaceShouldClose;
 
-	wl_seat* seat;
-	wl_region* region;
+	wl_seat* seat = nullptr;
+	wl_region* region = nullptr;
 
-	zwlr_screencopy_manager_v1* screenCopyManager;
-	zwlr_screencopy_frame_v1* screenCopyFrame;
+	zwlr_screencopy_manager_v1* screenCopyManager = nullptr;
+	zwlr_screencopy_frame_v1* screenCopyFrame = nullptr;
 	uint32_t screenCopyFlags;
 	bool screenCopyBufferWasHandled;
 
@@ -146,11 +149,12 @@ struct WaylandState
 	uint32_t virtualPointerYExtent = 0;
 	uint32_t virtualPointerXOrigin = 0;
 	uint32_t virtualPointerYOrigin = 0;
+	bool virtualPointerHasJumped = true;
 	bool shouldClickAndExit = false;
 
 	cv::Mat openCVInitialFrame;
-	cv::Scalar openCVRectangleScalar{0, 0, 255}; //BGR
-	int openCVRectangleThickness = 1;
+	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
+	int openCVRectangleThickness = 2;
 	int openCVCannyLowerThreshold = 0;
 	int openCVCannyUpperThreshold = 255;
 	int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
@@ -158,15 +162,16 @@ struct WaylandState
 
 	int letterCombinationsWidth = 1;
 	std::string userKeyboardInput = "";
-	std::unordered_map<std::string, cv::Point> letterCombinationsToPoints;
+	std::unordered_map<std::string, cv::Point> letterCombinationsToClickPoints;
+	std::unordered_map<std::string, cv::Rect> letterCombinationsToRects;
+	cv::Rect drawArea;
+	int drawAreaResizeCount = 0;
+	std::array<int, 3> drawResizeDivisorFromNthDraw = { 8, 8, 2 };
 };
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
 {
-
-	std::cout << "called" << std::endl;
-	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	wl_buffer_destroy(waylandState->buffer);
+	//WaylandState* waylandState = static_cast<WaylandState*>(data);
 }
 
 const wl_buffer_listener waylandBufferListener =
@@ -186,7 +191,7 @@ void screenCopyFrameHandleBuffer
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 
-	zwlr_screencopy_frame_v1_copy(frame, waylandState->buffer);
+	zwlr_screencopy_frame_v1_copy(frame, waylandState->screenshotBuffer);
 }
 
 void screenCopyFrameHandleFlags(void* data, zwlr_screencopy_frame_v1* frame, uint32_t flags)
@@ -285,18 +290,12 @@ void zxdgOutputHandleLogicalPosition(void *data, zxdg_output_v1 *zxdgOutput, int
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->outputsPositions.emplace_back(Position(x, y));
-	std::cout << "zxdgOutputHandleLogicalPosition!" << '\n' <<
-	"x " << x << '\n' <<
-	"y " << y << '\n' << std::endl;
 }
 
 void zxdgOutputHandleLogicalSize(void *data, zxdg_output_v1 *zxdgOutput, int32_t width, int32_t height)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->outputsDimensions.emplace_back(Dimension(width, height));
-	std::cout << "zxdgOutputHandleLogicalSize!" << '\n' <<
-	"width " << width << '\n' <<
-	"height " << height << '\n' << std::endl;
 }
 
 void zxdgOutputHandleDone(void *data, zxdg_output_v1 *zxdgOutput)
@@ -308,15 +307,10 @@ void zxdgOutputHandleName(void *data, zxdg_output_v1 *zxdgOutput, const char *na
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	waylandState->outputsNames.emplace_back(std::string(name));
-
-	std::cout << "zxdgOutputHandleName!" << '\n' <<
-	"const char* name " << name << '\n' << std::endl;
 }
 
 void zxdgOutputHandleDescription(void *data, zxdg_output_v1 *zxdgOutput, const char *description)
 {
-	std::cout << "zxdgOutputHandleDescription" << '\n' <<
-	"const char* description " << description << '\n' << std::endl;
 }
 
 const zxdg_output_v1_listener xdgOutputListener =
@@ -348,10 +342,9 @@ void incrementLetterCombination(std::string& letterCombination)
 	}
 }
 
-void nextScalarColor(cv::Scalar& scalar)
+void nextScalarColor(cv::Scalar& scalar, int incrementBy = 1)
 {
 	//taken from https://github.com/AmberGraph41161/ncursesMinesweeper
-	const int incrementBy = 1;
 	if(scalar[2] == 255 && scalar[1] < 255 && scalar[0] == 0)
 	{
 		scalar[1] += incrementBy;
@@ -395,7 +388,102 @@ void nextScalarColor(cv::Scalar& scalar)
 	}
 }
 
-void drawInitialFrame(WaylandState* waylandState)
+void drawGridFrame(WaylandState* waylandState)
+{
+	if(waylandState->virtualPointerHasJumped)
+	{
+		waylandState->virtualPointerHasJumped = false;
+		waylandState->letterCombinationsWidth = 1;
+		waylandState->letterCombinationsToRects.clear();
+		waylandState->letterCombinationsToClickPoints.clear();
+		std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
+	} else
+	{
+		return;
+	}
+
+	cv::Mat drawMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
+		waylandState->sharedMemoryStride
+	);
+
+	uint32_t gridBoxHeight = waylandState->drawArea.height / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
+	uint32_t gridBoxWidth = waylandState->drawArea.width / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
+	++waylandState->drawAreaResizeCount;
+	std::vector<cv::Rect> boundingRects;
+	for
+	(
+		uint32_t y = waylandState->drawArea.y;
+		y < waylandState->drawArea.y + waylandState->drawArea.height;
+		y += gridBoxHeight
+	)
+	{
+		for
+		(
+			int x = waylandState->drawArea.x;
+			x < waylandState->drawArea.x + waylandState->drawArea.width;
+			x += gridBoxWidth
+		)
+		{
+			boundingRects.emplace_back(cv::Rect(x, y, gridBoxWidth, gridBoxHeight));
+		}
+	}
+
+	int nLetterCombinations = 26;
+	while(nLetterCombinations < boundingRects.size())
+	{
+		nLetterCombinations *= nLetterCombinations;
+		++waylandState->letterCombinationsWidth;
+	}
+	std::string letterCombinationString(waylandState->letterCombinationsWidth, 'A');
+
+	double fontScale = 0.5;
+	for(size_t x = 0; x < boundingRects.size(); ++x)
+	{
+		cv::rectangle
+		(
+			drawMat,
+			boundingRects[x].tl(),
+			boundingRects[x].br(),
+			waylandState->openCVRectangleScalar,
+			waylandState->openCVRectangleThickness
+		);
+
+		cv::Point boundingRectBottomLeft
+		(
+			boundingRects[x].tl().x + waylandState->openCVRectangleThickness,
+			boundingRects[x].br().y - waylandState->openCVRectangleThickness
+		);
+
+		cv::putText
+		(
+			drawMat,
+			letterCombinationString,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			fontScale,
+			waylandState->openCVRectangleScalar
+		);
+
+		waylandState->letterCombinationsToRects[letterCombinationString] = boundingRects[x];
+		waylandState->letterCombinationsToClickPoints[letterCombinationString] = cv::Point
+		(
+			boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
+			boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+		);
+
+		incrementLetterCombination(letterCombinationString);
+		nextScalarColor(waylandState->openCVRectangleScalar, 50);
+	}
+
+	drawMat.copyTo(waylandState->openCVInitialFrame);
+}
+
+void drawButtonDetectionFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
 
@@ -414,7 +502,7 @@ void drawInitialFrame(WaylandState* waylandState)
 	//note:
 	//WL_SHM_FORMAT_XRGB8888 == CV_8UC4
 	//cv::Scalar is in BGR format, NOT RGB
-	cv::Mat originalMat
+	cv::Mat screenshotMat
 	(
 		waylandState->sharedMemoryHeight,
 		waylandState->sharedMemoryWidth,
@@ -422,7 +510,15 @@ void drawInitialFrame(WaylandState* waylandState)
 		waylandState->sharedMemoryPoolData,
 		waylandState->sharedMemoryStride
 	);
-	cv::Mat grayMat(originalMat);
+	cv::Mat drawMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
+		waylandState->sharedMemoryStride
+	);
+	cv::Mat grayMat(screenshotMat);
 	cv::cvtColor(grayMat, grayMat, cv::COLOR_BGR2GRAY);
 	cv::Canny
 	(
@@ -461,7 +557,7 @@ void drawInitialFrame(WaylandState* waylandState)
 	{
 		cv::rectangle
 		(
-			originalMat,
+			drawMat,
 			boundingRects[x].tl(),
 			boundingRects[x].br(),
 			waylandState->openCVRectangleScalar,
@@ -476,7 +572,7 @@ void drawInitialFrame(WaylandState* waylandState)
 
 		cv::putText
 		(
-			originalMat,
+			drawMat,
 			letterCombinationString,
 			boundingRectBottomLeft,
 			cv::FONT_HERSHEY_SIMPLEX,
@@ -484,7 +580,7 @@ void drawInitialFrame(WaylandState* waylandState)
 			waylandState->openCVRectangleScalar
 		);
 
-		waylandState->letterCombinationsToPoints[letterCombinationString] = cv::Point
+		waylandState->letterCombinationsToClickPoints[letterCombinationString] = cv::Point
 		(
 			boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
 			boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
@@ -494,24 +590,24 @@ void drawInitialFrame(WaylandState* waylandState)
 		nextScalarColor(waylandState->openCVRectangleScalar);
 	}
 
-	originalMat.copyTo(waylandState->openCVInitialFrame);
+	drawMat.copyTo(waylandState->openCVInitialFrame);
 }
 
 void drawFrame(WaylandState* waylandState)
 {
-	cv::Mat originalMat
+	cv::Mat drawMat
 	(
 		waylandState->sharedMemoryHeight,
 		waylandState->sharedMemoryWidth,
 		CV_8UC4,
-		waylandState->sharedMemoryPoolData,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
 		waylandState->sharedMemoryStride
 	);
-	waylandState->openCVInitialFrame.copyTo(originalMat);
+	waylandState->openCVInitialFrame.copyTo(drawMat);
 
 	cv::putText
 	(
-		originalMat,
+		drawMat,
 		waylandState->userKeyboardInput,
 		cv::Point
 		(
@@ -537,7 +633,6 @@ void layerSurfaceConfigure
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	zwlr_layer_surface_v1_ack_configure(layerSurface, serial);
 
-
 	waylandState->sharedMemoryWidth = width;
 	waylandState->sharedMemoryHeight = height;
 	waylandState->sharedMemoryStride = width * 4;
@@ -545,7 +640,8 @@ void layerSurfaceConfigure
 	//waylandState->sharedMemoryHeight = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height;
 	//waylandState->sharedMemoryStride = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height * 4;
 
-	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
+	waylandState->sharedMemoryFrameSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
+	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryFrameSize * waylandState->sharedMemoryNBuffers;
 
 	waylandState->sharedMemoryPoolFileDescriptor = allocate_shm_file(waylandState->sharedMemoryPoolSize);
 	if(waylandState->sharedMemoryPoolFileDescriptor == -1)
@@ -580,8 +676,8 @@ void layerSurfaceConfigure
 	);
 
 	int index = 0;
-	int offset = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride * index;
-	waylandState->buffer = wl_shm_pool_create_buffer
+	int offset = waylandState->sharedMemoryFrameSize * index;
+	waylandState->screenshotBuffer = wl_shm_pool_create_buffer
 	(
 		waylandState->sharedMemoryPool,
 		offset,
@@ -590,9 +686,30 @@ void layerSurfaceConfigure
 		waylandState->sharedMemoryStride,
 		WL_SHM_FORMAT_XRGB8888
 	);
+	wl_buffer_add_listener(waylandState->screenshotBuffer, &waylandBufferListener, waylandState);
+	
+	index = 1;
+	offset = waylandState->sharedMemoryFrameSize * index;
+	waylandState->buffer = wl_shm_pool_create_buffer
+	(
+		waylandState->sharedMemoryPool,
+		offset,
+		waylandState->sharedMemoryWidth,
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryStride,
+		WL_SHM_FORMAT_ARGB8888
+	);
 	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
-	drawInitialFrame(waylandState);
+	//drawInitialFrameButtonDetection(waylandState);
+	waylandState->drawArea = cv::Rect
+	(
+		0,
+		0,
+		waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
+		waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+	);
+	drawGridFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
 }
@@ -623,6 +740,7 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
+	drawGridFrame(waylandState);
 	drawFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_damage(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);
@@ -820,8 +938,8 @@ int main()
 	wl_display_roundtrip(waylandState.display); //process globals and listeners, send zxdg_output_v1_add_listener
 	wl_display_roundtrip(waylandState.display); //process dones
 
-	//const std::string targetMonitorName = "eDP-1";
-	const std::string targetMonitorName = "HDMI-A-1";
+	const std::string targetMonitorName = "eDP-1";
+	//const std::string targetMonitorName = "HDMI-A-1";
 	for(size_t x = 0; x < waylandState.outputsNames.size(); ++x)
 	{
 		if(waylandState.outputsNames[x] == targetMonitorName)
@@ -933,42 +1051,14 @@ int main()
 					switch(key)
 					{
 						case KEY_ESC:
-							waylandState.layerSurfaceShouldClose = true;
-							break;
-
-						/*
-						case KEY_L:
-						{
-							++waylandState.openCVBoundingRectCentersCursor;
-							if(waylandState.openCVBoundingRectCentersCursor >= waylandState.openCVBoundingRectCenters.size())
+							if(waylandState.userKeyboardInput.size() > 0)
 							{
-								waylandState.openCVBoundingRectCentersCursor = 0;
-							}
-							virtualPointerMoveAbsolute
-							(
-								waylandState,
-								waylandState.virtualPointerXOrigin + waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].x,
-								waylandState.virtualPointerYOrigin + waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].y
-							);
-							break;
-						}
-
-						case KEY_H:
-						{
-							--waylandState.openCVBoundingRectCentersCursor;
-							if(waylandState.openCVBoundingRectCentersCursor < 0)
+								waylandState.userKeyboardInput.clear();
+							} else
 							{
-								waylandState.openCVBoundingRectCentersCursor = waylandState.openCVBoundingRectCenters.size() - 1;
+								waylandState.layerSurfaceShouldClose = true;
 							}
-							virtualPointerMoveAbsolute
-							(
-								waylandState,
-								waylandState.virtualPointerXOrigin + waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].x,
-								waylandState.virtualPointerYOrigin + waylandState.openCVBoundingRectCenters[waylandState.openCVBoundingRectCentersCursor].y
-							);
 							break;
-						}
-						*/
 
 						case KEY_LEFTSHIFT:
 						{
@@ -989,7 +1079,7 @@ int main()
 								waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
 								(
 									waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
-									waylandState.letterCombinationsToPoints.count(waylandState.userKeyboardInput) == 0
+									waylandState.letterCombinationsToClickPoints.count(waylandState.userKeyboardInput) == 0
 								) ||
 								inputEventCodeToAscii[key] < 'A' ||
 								inputEventCodeToAscii[key] > 'Z'
@@ -998,15 +1088,25 @@ int main()
 								waylandState.userKeyboardInput.clear();
 								break;
 							}
-							if(waylandState.letterCombinationsToPoints.count(waylandState.userKeyboardInput))
+							if(waylandState.letterCombinationsToClickPoints.count(waylandState.userKeyboardInput))
 							{
 								virtualPointerMoveAbsolute
 								(
 									waylandState,
-									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToPoints.at(waylandState.userKeyboardInput).x,
-									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToPoints.at(waylandState.userKeyboardInput).y
+									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickPoints.at(waylandState.userKeyboardInput).x,
+									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickPoints.at(waylandState.userKeyboardInput).y
 								);
-								waylandState.userKeyboardInput.clear();
+
+								if(waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size())
+								{
+									waylandState.shouldClickAndExit = true;
+									virtualPointerLeftClick(waylandState);
+								} else
+								{
+									waylandState.drawArea = waylandState.letterCombinationsToRects.at(waylandState.userKeyboardInput);
+									waylandState.userKeyboardInput.clear();
+									waylandState.virtualPointerHasJumped = true;
+								}
 							}
 							break;
 						}
@@ -1065,6 +1165,10 @@ int main()
 	if(waylandState.surface)
 	{
 		wl_surface_destroy(waylandState.surface);
+	}
+	if(waylandState.screenshotBuffer)
+	{
+		wl_buffer_destroy(waylandState.screenshotBuffer);
 	}
 	if(waylandState.buffer)
 	{

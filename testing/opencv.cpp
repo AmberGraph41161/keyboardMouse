@@ -40,7 +40,19 @@ int main(int argc, char** argv)
 		cv::Canny(grayMat, grayMat, lowerThreshold, upperThreshold, apetureSize, false);
 
 		std::vector<std::vector<cv::Point>> contours;
-		cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+		//cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+		//cv::findContours(grayMat, contours, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+		cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+
+		/*
+		cv2.RETR_EXTERNAL: Retrieves only the outermost contours.
+		cv2.RETR_LIST: Retrieves all contours without any hierarchy.
+		cv2.RETR_TREE: Retrieves all contours and reconstructs a full hierarchy of nested contours. 
+
+		cv2.CHAIN_APPROX_NONE: Stores all contour points.
+		cv2.CHAIN_APPROX_SIMPLE: Compresses horizontal, vertical, and diagonal segments, saving memory by storing only the endpoints of these segments.
+		*/
+
 		for(size_t x = 0; x < contours.size(); ++x)
 		{
 			cv::Rect boundingRect = cv::boundingRect(contours[x]);

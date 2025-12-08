@@ -98,6 +98,8 @@ struct Position
 
 struct WaylandState
 {
+	bool displayGrid = true;
+
 	wl_display* display = nullptr;
 	wl_registry* registry = nullptr;
 	wl_compositor* compositor = nullptr;
@@ -531,13 +533,13 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 	);
 
 	std::vector<std::vector<cv::Point>> contours;
-	cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+	cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
 
 	std::vector<cv::Rect> boundingRects;
 	for(size_t x = 0; x < contours.size(); ++x)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
-		boundingRects.push_back(boundingRect);
+		boundingRects.emplace_back(boundingRect);
 	}
 
 	for(size_t x = 0; x < boundingRects.size(); ++x)
@@ -701,15 +703,20 @@ void layerSurfaceConfigure
 	);
 	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
-	//drawInitialFrameButtonDetection(waylandState);
-	waylandState->drawArea = cv::Rect
-	(
-		0,
-		0,
-		waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
-		waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
-	);
-	drawGridFrame(waylandState);
+	if(waylandState->displayGrid)
+	{
+		waylandState->drawArea = cv::Rect
+		(
+			0,
+			0,
+			waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
+			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+		);
+		drawGridFrame(waylandState);
+	} else
+	{
+		drawButtonDetectionFrame(waylandState);
+	}
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
 }
@@ -740,7 +747,10 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
-	drawGridFrame(waylandState);
+	if(waylandState->displayGrid)
+	{
+		drawGridFrame(waylandState);
+	}
 	drawFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_damage(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);
@@ -908,9 +918,13 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 	{ KEY_Z, 'Z' },
 };
 
-int main()
+int main(int argc, char** argv)
 {
 	WaylandState waylandState;
+	if(argc >= 2)
+	{
+		waylandState.displayGrid = false;
+	}
 
 	waylandState.display = wl_display_connect(getenv("WAYLAND_DISPLAY"));
 	if(!waylandState.display)
@@ -1097,7 +1111,11 @@ int main()
 									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickPoints.at(waylandState.userKeyboardInput).y
 								);
 
-								if(waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size())
+								if
+								(
+									!waylandState.displayGrid ||
+									waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
+								)
 								{
 									waylandState.shouldClickAndExit = true;
 									virtualPointerLeftClick(waylandState);

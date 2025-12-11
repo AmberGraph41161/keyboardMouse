@@ -1,6 +1,6 @@
 CFLAGS := -Wall -g
 CXXFLAGS := -Wall -std=c++17 -g
-CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc -linput -ludev
+CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc
 
 main: build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o build/wlr-virtual-pointer-unstable-v1.o build/xdg-output-unstable-v1.o
 	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^
@@ -26,6 +26,10 @@ build/xdg-output-unstable-v1.o: src/xdg-output-unstable-v1.c
 .PHONY: opencv
 opencv: testing/opencv.cpp
 	clang++ -Wall -std=c++17 -g -lopencv_core -lopencv_highgui -lopencv_imgcodecs -lopencv_imgproc -o opencv testing/opencv.cpp
+
+.PHONY: evdev
+evdev: testing/evdev.cpp
+	clang++ -Wall -std=c++17 -g -o evdev testing/evdev.cpp
 
 .PHONY: clean
 clean:

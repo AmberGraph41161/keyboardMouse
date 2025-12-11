@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <array>
 #include <unordered_map>
+#include <fstream>
+#include <filesystem>
 
 #include <opencv4/opencv2/core/types.hpp>
 #include <opencv4/opencv2/core.hpp>
@@ -25,12 +27,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <libinput.h>
-#include <libudev.h>
 #include <linux/input.h>
 #include <linux/input-event-codes.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/types.h>
 
 void randname(char* buf)
 {
@@ -968,28 +969,6 @@ void virtualPointerRightClick(WaylandState& waylandState)
 	wl_display_flush(waylandState.display);
 }
 
-int libinputOpenRestricted(const char* path, int flags, void* data)
-{
-	int fileDescriptor = open(path, flags);
-	if(fileDescriptor < 0)
-	{
-		std::cerr << "failed to open fileDescriptor" << std::endl;
-	}
-
-	return fileDescriptor;
-}
-
-void libinputCloseRestricted(int fileDescriptor, void* data)
-{
-	close(fileDescriptor);
-}
-
-const libinput_interface libinputInterface =
-{
-	.open_restricted = libinputOpenRestricted,
-	.close_restricted = libinputCloseRestricted
-};
-
 void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
@@ -1173,26 +1152,105 @@ int main(int argc, char** argv)
 	wl_surface_commit(waylandState.surface);
 	wl_display_flush(waylandState.display);
 
-	udev* udevContext = udev_new();
-	if(!udevContext)
+	const std::filesystem::path datFolderFilePath("./dat/");
+	const std::filesystem::path keyboardTargetTextFilePath("./dat/keyboardTarget.txt");
+	const std::filesystem::path eventDeviceFolderPath("/dev/input/");
+
+	if(!std::filesystem::exists(datFolderFilePath))
 	{
-		std::cerr << "failed to create udevContext" << std::endl;
-		exit(EXIT_FAILURE);
+		std::cerr << datFolderFilePath << " doesn't exist! creating " << datFolderFilePath << " folder..." << std::endl;
+		if(!std::filesystem::create_directory(datFolderFilePath))
+		{
+			std::cerr << "failed to create " << datFolderFilePath << " folder! aborting!" << std::endl;
+			exit(EXIT_FAILURE);
+		}
 	}
 
-	libinput* libinputContext = libinput_udev_create_context(&libinputInterface, NULL, udevContext);
-	if(!libinputContext)
+	std::fstream fstreamReader;
+	fstreamReader.open(keyboardTargetTextFilePath, std::fstream::in);
+	if(fstreamReader.fail())
 	{
-		std::cerr << "failed to create libinputContext" << std::endl;
+		std::cerr << "failed to read from " << keyboardTargetTextFilePath << "! aborting!" << std::endl;
 		exit(EXIT_FAILURE);
 	}
+	std::string keyboardTarget;
+	std::getline(fstreamReader, keyboardTarget);
 
-	if(libinput_udev_assign_seat(libinputContext, "seat0") != 0)
+	std::filesystem::path keyboardDevicePath("/");
+	std::string keyboardDeviceName;
+	for
+	(
+		std::filesystem::directory_iterator it(eventDeviceFolderPath);
+		it != std::filesystem::directory_iterator{};
+		++it
+	)
 	{
-		std::cerr << "failed to assign seat0" << std::endl;
-		exit(EXIT_FAILURE);
+		std::filesystem::directory_entry entry = *it;
+
+		int fileDescriptor = open(entry.path().c_str(), O_RDONLY);
+		if(fileDescriptor == -1)
+		{
+			++it;
+			continue;
+		}
+		char deviceName[256];
+		if(ioctl(fileDescriptor, EVIOCGNAME(sizeof(deviceName)), deviceName) == -1)
+		{
+			++it;
+			continue;
+		}
+
+		if(std::string(deviceName).find(keyboardTarget) != std::string::npos)
+		{
+			keyboardDevicePath = entry.path();
+			keyboardDeviceName = deviceName;
+			break;
+		}
 	}
 
+	if(keyboardDevicePath.string() == "/")
+	{
+		std::cerr << "failed to find eventDevice named \"" << keyboardTarget << "\"!" << std::endl;
+		std::cerr << "listing all eventDevice names!" << std::endl;
+		for
+		(
+			std::filesystem::directory_iterator it(eventDeviceFolderPath);
+			it != std::filesystem::directory_iterator{};
+			++it
+		)
+		{
+			std::filesystem::directory_entry entry = *it;
+
+			int fileDescriptor = open(entry.path().c_str(), O_RDONLY);
+			if(fileDescriptor == -1)
+			{
+				++it;
+				continue;
+			}
+			char deviceName[256];
+			if(ioctl(fileDescriptor, EVIOCGNAME(sizeof(deviceName)), deviceName) == -1)
+			{
+				++it;
+				continue;
+			}
+			std::cerr << entry.path() << " " << deviceName << std::endl;
+		}
+		std::cerr << "aborting!" << std::endl;
+		exit(EXIT_FAILURE);
+	}
+	std::cout << "keyboardTarget \"" << keyboardTarget << "\" found!" << std::endl;
+	std::cout << keyboardDevicePath << " " << keyboardDeviceName << std::endl;
+
+	int keyboardFileDescriptor = open(keyboardDevicePath.c_str(), O_RDONLY);
+	if(keyboardFileDescriptor == -1)
+	{
+		perror("something went wrong while opening device...");
+		exit(EXIT_FAILURE);
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	ioctl(keyboardFileDescriptor, EVIOCGRAB, 1);
+
+	input_event inputEvent;
 	while
 	(
 		!waylandState.layerSurfaceShouldClose &&
@@ -1200,123 +1258,128 @@ int main(int argc, char** argv)
 		wl_display_dispatch(waylandState.display) != -1
 	)
 	{
-		libinput_dispatch(libinputContext);
-		libinput_event* libinputEvent;
-		while((libinputEvent = libinput_get_event(libinputContext)))
+		ssize_t inputEventReadSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
+		if(inputEventReadSize == (ssize_t)(-1))
 		{
-			libinput_event_type libinputEventType = libinput_event_get_type(libinputEvent);
-			if(libinputEventType == LIBINPUT_EVENT_KEYBOARD_KEY)
+			perror("error reading input device inputEvent!");
+			break;
+		}
+		if(inputEventReadSize == (ssize_t)(0))
+		{
+			std::cout << "nothing read from inputEvent. EOF maybe?" << std::endl;
+			break;
+		}
+
+		if(inputEvent.type == EV_KEY)
+		{
+			if(inputEvent.value == 1) //pressed
 			{
-				libinput_event_keyboard* libinputEventKeyboard = libinput_event_get_keyboard_event(libinputEvent); //owned by libinputEvent, thus freed also when libinputEvent freed.
-				uint32_t key = libinput_event_keyboard_get_key(libinputEventKeyboard);
-				libinput_key_state libinputKeyState = libinput_event_keyboard_get_key_state(libinputEventKeyboard);
-
-				if(libinputKeyState == LIBINPUT_KEY_STATE_PRESSED)
+				switch(inputEvent.code)
 				{
-					switch(key)
+					case KEY_ESC:
 					{
-						case KEY_ESC:
+						if(waylandState.userKeyboardInput.size() > 0)
 						{
-							if(waylandState.userKeyboardInput.size() > 0)
-							{
-								waylandState.userKeyboardInput.clear();
-							} else
-							{
-								waylandState.layerSurfaceShouldClose = true;
-							}
-							break;
+							waylandState.userKeyboardInput.clear();
+						} else
+						{
+							waylandState.layerSurfaceShouldClose = true;
 						}
+						break;
+					}
 
-						case KEY_BACKSPACE:
+					case KEY_BACKSPACE:
+					{
+						if(waylandState.userKeyboardInput.size() > 0)
 						{
-							if(waylandState.userKeyboardInput.size() > 0)
-							{
-								waylandState.userKeyboardInput.pop_back();
-							}
-							break;
+							waylandState.userKeyboardInput.pop_back();
 						}
+						break;
+					}
 
-						case KEY_LEFTSHIFT:
-						{
-							virtualPointerLeftDown(waylandState);
-							break;
-						}
-						case KEY_RIGHTSHIFT:
-						{
-							virtualPointerRightDown(waylandState);
-							break;
-						}
+					case KEY_LEFTSHIFT:
+					{
+						virtualPointerLeftDown(waylandState);
+						break;
+					}
+					case KEY_RIGHTSHIFT:
+					{
+						virtualPointerRightDown(waylandState);
+						break;
+					}
 
-						default:
+					default:
+					{
+						waylandState.userKeyboardInput += inputEventCodeToAscii[inputEvent.code];
+						if
+						(
+							waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
+							(
+								waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
+								waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput) == 0
+							) ||
+							inputEventCodeToAscii[inputEvent.code] < 'A' ||
+							inputEventCodeToAscii[inputEvent.code] > 'Z'
+						)
 						{
-							waylandState.userKeyboardInput += inputEventCodeToAscii[key];
+							drawFrame(&waylandState);
+							wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
+							wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
+							wl_surface_commit(waylandState.surface);
+							waylandState.userKeyboardInput.clear();
+							break;
+						}
+						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
+						{
+							virtualPointerMoveAbsolute
+							(
+								waylandState,
+								waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
+								waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
+							);
+
 							if
 							(
-								waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
-								(
-									waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
-									waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput) == 0
-								) ||
-								inputEventCodeToAscii[key] < 'A' ||
-								inputEventCodeToAscii[key] > 'Z'
+								!waylandState.displayGrid ||
+								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
 							)
 							{
-								waylandState.userKeyboardInput.clear();
-								break;
-							}
-							if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
+								waylandState.shouldClickAndExit = true;
+								drawFrame(&waylandState);
+								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
+								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
+								wl_surface_commit(waylandState.surface);
+								virtualPointerLeftClick(waylandState);
+							} else
 							{
-								virtualPointerMoveAbsolute
-								(
-									waylandState,
-									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
-									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
-								);
-
-								if
-								(
-									!waylandState.displayGrid ||
-									waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
-								)
-								{
-									waylandState.shouldClickAndExit = true;
-									drawFrame(&waylandState);
-									wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
-									wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
-									wl_surface_commit(waylandState.surface);
-									virtualPointerLeftClick(waylandState);
-								} else
-								{
-									waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
-									waylandState.userKeyboardInput.clear();
-									waylandState.virtualPointerHasJumped = true;
-								}
+								waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
+								waylandState.userKeyboardInput.clear();
+								waylandState.virtualPointerHasJumped = true;
 							}
-							break;
 						}
+						break;
 					}
-				} else if(libinputKeyState == LIBINPUT_KEY_STATE_RELEASED)
+				}
+			} else
+			{
+				switch(inputEvent.code)
 				{
-					switch(key)
+					case KEY_LEFTSHIFT:
 					{
-						case KEY_LEFTSHIFT:
-						{
-							virtualPointerLeftUp(waylandState);
-							break;
-						}
-						case KEY_RIGHTSHIFT:
-						{
-							virtualPointerRightUp(waylandState);
-							break;
-						}
+						virtualPointerLeftUp(waylandState);
+						break;
+					}
+					case KEY_RIGHTSHIFT:
+					{
+						virtualPointerRightUp(waylandState);
+						break;
 					}
 				}
 			}
 		}
-		libinput_event_destroy(libinputEvent);
 	}
-	libinput_unref(libinputContext);
-	udev_unref(udevContext);
+	ioctl(keyboardFileDescriptor, EVIOCGRAB, 0);
+	close(keyboardFileDescriptor);
 
 	//cleanup
 	if(waylandState.registry)

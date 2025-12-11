@@ -1,6 +1,8 @@
 /main
 /opencv
 /mouse
+/evdev
+/dat/
 /build/
 /notes.txt
 /output.txt

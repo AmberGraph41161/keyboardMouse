@@ -96,6 +96,14 @@ struct Position
 	uint32_t y = 0;
 };
 
+struct ClickTarget
+{
+	cv::Rect rectangle;
+	cv::Scalar scalar;
+	cv::Point clickPoint;
+	std::string letterCombination;
+};
+
 struct WaylandState
 {
 	bool displayGrid = true;
@@ -107,7 +115,7 @@ struct WaylandState
 	std::vector<wl_output*> outputs;
 	std::vector<std::string> outputsNames;
 	std::vector<Dimension> outputsDimensions;
-	int selectedOutputIndex = 0;
+	int selectedOutputIndex;
 
 	zxdg_output_manager_v1* xdgOutputManager = nullptr;
 	std::vector<Position> outputsPositions;
@@ -154,8 +162,15 @@ struct WaylandState
 	bool virtualPointerHasJumped = true;
 	bool shouldClickAndExit = false;
 
+	int openCVFontThickness = 2;
+	int openCVFontShadowThickness = 4;
+	int openCVFontUserInputThickness = 30;
+	int openCVFontUserInputShadowThickness = 35;
+	double openCVFontScale = 0.5;
+	double openCVFontUserInputScale = 10;
 	cv::Mat openCVInitialFrame;
 	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
+	cv::Scalar openCVTextScalar{0, 0, 0, 255};
 	int openCVRectangleThickness = 2;
 	int openCVCannyLowerThreshold = 0;
 	int openCVCannyUpperThreshold = 255;
@@ -164,8 +179,8 @@ struct WaylandState
 
 	int letterCombinationsWidth = 1;
 	std::string userKeyboardInput = "";
-	std::unordered_map<std::string, cv::Point> letterCombinationsToClickPoints;
-	std::unordered_map<std::string, cv::Rect> letterCombinationsToRects;
+	std::unordered_map<std::string, std::vector<ClickTarget>> layeredLetterCombinationsToClickTargets;
+	std::unordered_map<std::string, ClickTarget> letterCombinationsToClickTargets;
 	cv::Rect drawArea;
 	int drawAreaResizeCount = 0;
 	std::array<int, 3> drawResizeDivisorFromNthDraw = { 8, 8, 2 };
@@ -313,6 +328,7 @@ void zxdgOutputHandleName(void *data, zxdg_output_v1 *zxdgOutput, const char *na
 
 void zxdgOutputHandleDescription(void *data, zxdg_output_v1 *zxdgOutput, const char *description)
 {
+	//don't need
 }
 
 const zxdg_output_v1_listener xdgOutputListener =
@@ -396,8 +412,7 @@ void drawGridFrame(WaylandState* waylandState)
 	{
 		waylandState->virtualPointerHasJumped = false;
 		waylandState->letterCombinationsWidth = 1;
-		waylandState->letterCombinationsToRects.clear();
-		waylandState->letterCombinationsToClickPoints.clear();
+		waylandState->letterCombinationsToClickTargets.clear();
 		std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
 	} else
 	{
@@ -441,9 +456,8 @@ void drawGridFrame(WaylandState* waylandState)
 		nLetterCombinations *= nLetterCombinations;
 		++waylandState->letterCombinationsWidth;
 	}
-	std::string letterCombinationString(waylandState->letterCombinationsWidth, 'A');
+	std::string letterCombination(waylandState->letterCombinationsWidth, 'A');
 
-	double fontScale = 0.5;
 	for(size_t x = 0; x < boundingRects.size(); ++x)
 	{
 		cv::rectangle
@@ -464,28 +478,44 @@ void drawGridFrame(WaylandState* waylandState)
 		cv::putText
 		(
 			drawMat,
-			letterCombinationString,
+			letterCombination,
 			boundingRectBottomLeft,
 			cv::FONT_HERSHEY_SIMPLEX,
-			fontScale,
-			waylandState->openCVRectangleScalar
+			waylandState->openCVFontScale,
+			waylandState->openCVRectangleScalar,
+			waylandState->openCVFontShadowThickness
 		);
-
-		waylandState->letterCombinationsToRects[letterCombinationString] = boundingRects[x];
-		waylandState->letterCombinationsToClickPoints[letterCombinationString] = cv::Point
+		cv::putText
 		(
-			boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
-			boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+			drawMat,
+			letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			waylandState->openCVTextScalar,
+			waylandState->openCVFontThickness
 		);
 
-		incrementLetterCombination(letterCombinationString);
+		waylandState->letterCombinationsToClickTargets[letterCombination] = ClickTarget
+		{
+			.rectangle = boundingRects[x],
+			.scalar = waylandState->openCVRectangleScalar,
+			.clickPoint = cv::Point
+			(
+				boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
+				boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+			),
+			.letterCombination = letterCombination
+		};
+
+		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar, 50);
 	}
 
 	drawMat.copyTo(waylandState->openCVInitialFrame);
 }
 
-void drawButtonDetectionFrame(WaylandState* waylandState)
+void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 {
 	waylandState->screenCopyBufferWasHandled = false;
 
@@ -533,6 +563,7 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 	);
 
 	std::vector<std::vector<cv::Point>> contours;
+	cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 3)));
 	cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
 
 	std::vector<cv::Rect> boundingRects;
@@ -542,19 +573,14 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 		boundingRects.emplace_back(boundingRect);
 	}
 
-	for(size_t x = 0; x < boundingRects.size(); ++x)
-	{
-	}
-
 	int nLetterCombinations = 26;
 	while(nLetterCombinations < boundingRects.size())
 	{
 		nLetterCombinations *= nLetterCombinations;
 		++waylandState->letterCombinationsWidth;
 	}
-	std::string letterCombinationString(waylandState->letterCombinationsWidth, 'A');
+	std::string letterCombination(waylandState->letterCombinationsWidth, 'A');
 
-	double fontScale = 0.5;
 	for(size_t x = 0; x < boundingRects.size(); ++x)
 	{
 		cv::rectangle
@@ -575,21 +601,116 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 		cv::putText
 		(
 			drawMat,
-			letterCombinationString,
+			letterCombination,
 			boundingRectBottomLeft,
 			cv::FONT_HERSHEY_SIMPLEX,
-			fontScale,
-			waylandState->openCVRectangleScalar
+			waylandState->openCVFontScale,
+			waylandState->openCVRectangleScalar,
+			waylandState->openCVFontShadowThickness
 		);
-
-		waylandState->letterCombinationsToClickPoints[letterCombinationString] = cv::Point
+		cv::putText
 		(
-			boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
-			boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+			drawMat,
+			letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			waylandState->openCVTextScalar,
+			waylandState->openCVFontThickness
 		);
 
-		incrementLetterCombination(letterCombinationString);
+		ClickTarget clickTarget
+		{
+			.rectangle = boundingRects[x],
+			.scalar = waylandState->openCVRectangleScalar,
+			.clickPoint = cv::Point
+			(
+				boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
+				boundingRects[x].tl().y + ((boundingRects[x].br().y - boundingRects[x].tl().y) / 2)
+			),
+			.letterCombination = letterCombination
+		};
+
+		waylandState->letterCombinationsToClickTargets[letterCombination] = clickTarget;
+		for(size_t y = 1; y < letterCombination.size(); ++y)
+		{
+			//omg this looks cryptic as heck
+			waylandState->layeredLetterCombinationsToClickTargets[letterCombination.substr(0, y)].emplace_back(clickTarget);
+		}
+
+		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar);
+	}
+
+	drawMat.copyTo(waylandState->openCVInitialFrame);
+}
+
+void drawButtonDetectionFrame(WaylandState* waylandState)
+{
+	std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
+	cv::Mat drawMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
+		waylandState->sharedMemoryStride
+	);
+
+	std::vector<ClickTarget> clickTargets;
+	if(waylandState->userKeyboardInput.size() > 0)
+	{
+		clickTargets = waylandState->layeredLetterCombinationsToClickTargets[waylandState->userKeyboardInput];
+	} else
+	{
+		for
+		(
+			std::unordered_map<std::string, ClickTarget>::iterator it = waylandState->letterCombinationsToClickTargets.begin();
+			it != waylandState->letterCombinationsToClickTargets.end();
+			++it
+		)
+		{
+			clickTargets.emplace_back((*it).second);
+		}
+	}
+
+	for(size_t x = 0; x < clickTargets.size(); ++x)
+	{
+		cv::rectangle
+		(
+			drawMat,
+			clickTargets[x].rectangle.tl(),
+			clickTargets[x].rectangle.br(),
+			clickTargets[x].scalar,
+			waylandState->openCVRectangleThickness
+		);
+
+		cv::Point boundingRectBottomLeft
+		(
+			clickTargets[x].rectangle.tl().x + waylandState->openCVRectangleThickness,
+			clickTargets[x].rectangle.br().y - waylandState->openCVRectangleThickness
+		);
+
+		cv::putText
+		(
+			drawMat,
+			clickTargets[x].letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			clickTargets[x].scalar,
+			waylandState->openCVFontShadowThickness
+		);
+		cv::putText
+		(
+			drawMat,
+			clickTargets[x].letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			waylandState->openCVTextScalar,
+			waylandState->openCVFontThickness
+		);
 	}
 
 	drawMat.copyTo(waylandState->openCVInitialFrame);
@@ -613,13 +734,27 @@ void drawFrame(WaylandState* waylandState)
 		waylandState->userKeyboardInput,
 		cv::Point
 		(
-			0, //waylandState->outputsDimensions[waylandState->selectedOutputIndex].width / 2,
+			0,
 			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
 		),
 		cv::FONT_HERSHEY_SIMPLEX,
-		10,
+		waylandState->openCVFontUserInputScale,
 		waylandState->openCVRectangleScalar,
-		30
+		waylandState->openCVFontUserInputShadowThickness
+	);
+	cv::putText
+	(
+		drawMat,
+		waylandState->userKeyboardInput,
+		cv::Point
+		(
+			0,
+			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+		),
+		cv::FONT_HERSHEY_SIMPLEX,
+		waylandState->openCVFontUserInputScale,
+		waylandState->openCVTextScalar,
+		waylandState->openCVFontUserInputThickness
 	);
 }
 
@@ -715,7 +850,7 @@ void layerSurfaceConfigure
 		drawGridFrame(waylandState);
 	} else
 	{
-		drawButtonDetectionFrame(waylandState);
+		drawInitialButtonDetectionFrame(waylandState);
 	}
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_commit(waylandState->surface);
@@ -750,6 +885,9 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	if(waylandState->displayGrid)
 	{
 		drawGridFrame(waylandState);
+	} else
+	{
+		drawButtonDetectionFrame(waylandState);
 	}
 	drawFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
@@ -921,7 +1059,15 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 int main(int argc, char** argv)
 {
 	WaylandState waylandState;
+
+	std::string targetMonitorName;
 	if(argc >= 2)
+	{
+		//targetMonitorName = "eDP-1";
+		//targetMonitorName = "HDMI-A-1";
+		targetMonitorName = argv[1];
+	}
+	if(argc >= 3)
 	{
 		waylandState.displayGrid = false;
 	}
@@ -952,8 +1098,7 @@ int main(int argc, char** argv)
 	wl_display_roundtrip(waylandState.display); //process globals and listeners, send zxdg_output_v1_add_listener
 	wl_display_roundtrip(waylandState.display); //process dones
 
-	const std::string targetMonitorName = "eDP-1";
-	//const std::string targetMonitorName = "HDMI-A-1";
+	waylandState.selectedOutputIndex = -1;
 	for(size_t x = 0; x < waylandState.outputsNames.size(); ++x)
 	{
 		if(waylandState.outputsNames[x] == targetMonitorName)
@@ -963,6 +1108,12 @@ int main(int argc, char** argv)
 			waylandState.virtualPointerYOrigin = waylandState.outputsPositions[x].y;
 			break;
 		}
+	}
+	if(waylandState.selectedOutputIndex == -1)
+	{
+		waylandState.selectedOutputIndex = 0;
+		waylandState.virtualPointerXOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].x;
+		waylandState.virtualPointerYOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].y;
 	}
 
 	for(size_t x = 0; x < waylandState.outputsDimensions.size(); x++)
@@ -1065,6 +1216,7 @@ int main(int argc, char** argv)
 					switch(key)
 					{
 						case KEY_ESC:
+						{
 							if(waylandState.userKeyboardInput.size() > 0)
 							{
 								waylandState.userKeyboardInput.clear();
@@ -1073,6 +1225,16 @@ int main(int argc, char** argv)
 								waylandState.layerSurfaceShouldClose = true;
 							}
 							break;
+						}
+
+						case KEY_BACKSPACE:
+						{
+							if(waylandState.userKeyboardInput.size() > 0)
+							{
+								waylandState.userKeyboardInput.pop_back();
+							}
+							break;
+						}
 
 						case KEY_LEFTSHIFT:
 						{
@@ -1093,7 +1255,7 @@ int main(int argc, char** argv)
 								waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
 								(
 									waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
-									waylandState.letterCombinationsToClickPoints.count(waylandState.userKeyboardInput) == 0
+									waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput) == 0
 								) ||
 								inputEventCodeToAscii[key] < 'A' ||
 								inputEventCodeToAscii[key] > 'Z'
@@ -1102,13 +1264,13 @@ int main(int argc, char** argv)
 								waylandState.userKeyboardInput.clear();
 								break;
 							}
-							if(waylandState.letterCombinationsToClickPoints.count(waylandState.userKeyboardInput))
+							if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
 							{
 								virtualPointerMoveAbsolute
 								(
 									waylandState,
-									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickPoints.at(waylandState.userKeyboardInput).x,
-									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickPoints.at(waylandState.userKeyboardInput).y
+									waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
+									waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
 								);
 
 								if
@@ -1118,10 +1280,14 @@ int main(int argc, char** argv)
 								)
 								{
 									waylandState.shouldClickAndExit = true;
+									drawFrame(&waylandState);
+									wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
+									wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
+									wl_surface_commit(waylandState.surface);
 									virtualPointerLeftClick(waylandState);
 								} else
 								{
-									waylandState.drawArea = waylandState.letterCombinationsToRects.at(waylandState.userKeyboardInput);
+									waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
 									waylandState.userKeyboardInput.clear();
 									waylandState.virtualPointerHasJumped = true;
 								}

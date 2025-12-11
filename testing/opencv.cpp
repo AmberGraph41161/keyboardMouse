@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv4/opencv2/core/base.hpp>
 
 void nextApeture(int state, void* data)
 {
@@ -43,6 +44,11 @@ int main(int argc, char** argv)
 		//cv::findContours(grayMat, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 		//cv::findContours(grayMat, contours, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
 		cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+
+		//cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_DILATE, cv::Size(16, 16)), cv::Point(-1, -1), 1, cv::BORDER_CONSTANT);
+		//cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+		cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 3)));
+		//cv::erode(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1, 1)));
 
 		/*
 		cv2.RETR_EXTERNAL: Retrieves only the outermost contours.

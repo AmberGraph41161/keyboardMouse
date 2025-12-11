@@ -31,7 +31,11 @@ A project inspired by:
         - [How the heck does wayland work?](https://www.youtube.com/watch?v=m39KIio5lL4)
     - OpenCV related
         - [Object Detection using HSV Color Space [C++/OpenCV]](https://www.youtube.com/watch?v=vIrmMAib7Go)
-        - [How I animate stuff on Desmos Graphing Calculator](https://www.youtube.com/watch?v=BQvBq3K50u8&t=4m21s) 
+        - [How I animate stuff on Desmos Graphing Calculator](https://www.youtube.com/watch?v=BQvBq3K50u8&t=4m21s)
+- [OpenCV forums "how to group contours in close proximity to each other"](https://forum.opencv.org/t/how-to-group-contours-in-close-proximity-to-each-other/1719)
+- [OpenCV Documentation dilation](https://docs.opencv.org/4.x/d4/d86/group__imgproc__filter.html#ga4ff0f3318642c4f469d0e11f242f3b6c)
+- [OpenCV Documentation Morphological Transformations](https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html)
+- [OpenCV Documentation drawing functions](https://docs.opencv.org/4.x/d6/d6e/group__imgproc__draw.html#ga3d2abfcb995fd2db908c8288199dba82)
 
 # Please view only
 

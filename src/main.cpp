@@ -1,6 +1,4 @@
 #include <iostream>
-#include <chrono>
-#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -161,7 +159,7 @@ struct WaylandState
 	uint32_t virtualPointerXOrigin = 0;
 	uint32_t virtualPointerYOrigin = 0;
 	bool virtualPointerHasJumped = true;
-	bool shouldClickAndExit = false;
+	bool shouldActionAndExit = false;
 
 	int openCVFontThickness = 2;
 	int openCVFontShadowThickness = 4;
@@ -969,6 +967,35 @@ void virtualPointerRightClick(WaylandState& waylandState)
 	wl_display_flush(waylandState.display);
 }
 
+void virtualPointerMiddleDown(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+void virtualPointerMiddleUp(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
+void virtualPointerMiddleClick(WaylandState& waylandState)
+{
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_PRESSED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+
+	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
+	++waylandState.virtualPointerTime;
+	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
+	wl_display_flush(waylandState.display);
+}
+
 void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
@@ -1035,18 +1062,38 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 	{ KEY_Z, 'Z' },
 };
 
+enum class Action { move, leftClick, rightClick, middleClick, leftDrag, rightDrag, middleDrag };
+std::unordered_map<std::string, Action> stringToAction =
+{
+	{ "move", Action::move },
+	{ "leftClick", Action::leftClick },
+	{ "rightClick", Action::rightClick },
+	{ "middleClick", Action::middleClick },
+	{ "leftDrag", Action::leftDrag },
+	{ "rightDrag", Action::rightDrag },
+	{ "middleDrag", Action::middleDrag }
+};
+
 int main(int argc, char** argv)
 {
+	Action action = Action::leftClick;
+	bool dragActionMouseDown = false;
+
 	WaylandState waylandState;
 
 	std::string targetMonitorName;
 	if(argc >= 2)
 	{
-		//targetMonitorName = "eDP-1";
-		//targetMonitorName = "HDMI-A-1";
 		targetMonitorName = argv[1];
 	}
 	if(argc >= 3)
+	{
+		if(stringToAction.count(argv[2]))
+		{
+			action = stringToAction.at(argv[2]);
+		}
+	}
+	if(argc >= 4)
 	{
 		waylandState.displayGrid = false;
 	}
@@ -1090,6 +1137,7 @@ int main(int argc, char** argv)
 	}
 	if(waylandState.selectedOutputIndex == -1)
 	{
+		std::cerr << "failed to find monitor named \"" << targetMonitorName << "\"!" << std::endl;
 		waylandState.selectedOutputIndex = 0;
 		waylandState.virtualPointerXOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].x;
 		waylandState.virtualPointerYOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].y;
@@ -1247,14 +1295,13 @@ int main(int argc, char** argv)
 		perror("something went wrong while opening device...");
 		exit(EXIT_FAILURE);
 	}
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	ioctl(keyboardFileDescriptor, EVIOCGRAB, 1);
 
 	input_event inputEvent;
 	while
 	(
 		!waylandState.layerSurfaceShouldClose &&
-		!waylandState.shouldClickAndExit &&
+		!waylandState.shouldActionAndExit &&
 		wl_display_dispatch(waylandState.display) != -1
 	)
 	{
@@ -1344,12 +1391,111 @@ int main(int argc, char** argv)
 								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
 							)
 							{
-								waylandState.shouldClickAndExit = true;
 								drawFrame(&waylandState);
 								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
 								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
 								wl_surface_commit(waylandState.surface);
-								virtualPointerLeftClick(waylandState);
+								switch(action)
+								{
+									case Action::move:
+									{
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::leftClick:
+									{
+										virtualPointerLeftClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::rightClick:
+									{
+										virtualPointerRightClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::middleClick:
+									{
+										virtualPointerRightClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::leftDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerLeftUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerLeftDown(waylandState);
+											waylandState.drawAreaResizeCount = 0;
+											waylandState.userKeyboardInput.clear();
+											waylandState.layeredLetterCombinationsToClickTargets.clear();
+											waylandState.letterCombinationsToClickTargets.clear();
+											waylandState.drawArea = cv::Rect
+											(
+												0,
+												0,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+											);
+											waylandState.virtualPointerHasJumped = true;
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+									case Action::rightDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerRightUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerRightDown(waylandState);
+											waylandState.drawAreaResizeCount = 0;
+											waylandState.userKeyboardInput.clear();
+											waylandState.layeredLetterCombinationsToClickTargets.clear();
+											waylandState.letterCombinationsToClickTargets.clear();
+											waylandState.drawArea = cv::Rect
+											(
+												0,
+												0,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+											);
+											waylandState.virtualPointerHasJumped = true;
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+									case Action::middleDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerMiddleUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerMiddleDown(waylandState);
+											waylandState.drawAreaResizeCount = 0;
+											waylandState.userKeyboardInput.clear();
+											waylandState.layeredLetterCombinationsToClickTargets.clear();
+											waylandState.letterCombinationsToClickTargets.clear();
+											waylandState.drawArea = cv::Rect
+											(
+												0,
+												0,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+											);
+											waylandState.virtualPointerHasJumped = true;
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+								}
 							} else
 							{
 								waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;

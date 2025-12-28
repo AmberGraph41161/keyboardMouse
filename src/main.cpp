@@ -141,7 +141,7 @@ struct WaylandState
 	int layerSurfacePaddingLeft = 0;
 	zwlr_layer_shell_v1* layerShell = nullptr;
 	zwlr_layer_surface_v1* layerSurface = nullptr;
-	bool layerSurfaceShouldClose;
+	bool layerSurfaceShouldClose = false;
 
 	wl_seat* seat = nullptr;
 	wl_region* region = nullptr;
@@ -149,7 +149,7 @@ struct WaylandState
 	zwlr_screencopy_manager_v1* screenCopyManager = nullptr;
 	zwlr_screencopy_frame_v1* screenCopyFrame = nullptr;
 	uint32_t screenCopyFlags;
-	bool screenCopyBufferWasHandled;
+	bool screenCopyBufferWasHandled = false;
 
 	zwlr_virtual_pointer_manager_v1* virtualPointerManager;
 	zwlr_virtual_pointer_v1* virtualPointer;
@@ -158,7 +158,7 @@ struct WaylandState
 	uint32_t virtualPointerYExtent = 0;
 	uint32_t virtualPointerXOrigin = 0;
 	uint32_t virtualPointerYOrigin = 0;
-	bool virtualPointerHasJumped = true;
+	bool shouldRedrawGridFrame = true;
 	bool shouldActionAndExit = false;
 
 	int openCVFontThickness = 2;
@@ -405,11 +405,27 @@ void nextScalarColor(cv::Scalar& scalar, int incrementBy = 1)
 	}
 }
 
+void resetDrawGridFrameVariables(WaylandState& waylandState)
+{
+	waylandState.drawAreaResizeCount = 0;
+	waylandState.userKeyboardInput.clear();
+	waylandState.layeredLetterCombinationsToClickTargets.clear();
+	waylandState.letterCombinationsToClickTargets.clear();
+	waylandState.drawArea = cv::Rect
+	(
+		0,
+		0,
+		waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
+		waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+	);
+	waylandState.shouldRedrawGridFrame = true;
+}
+
 void drawGridFrame(WaylandState* waylandState)
 {
-	if(waylandState->virtualPointerHasJumped)
+	if(waylandState->shouldRedrawGridFrame)
 	{
-		waylandState->virtualPointerHasJumped = false;
+		waylandState->shouldRedrawGridFrame = false;
 		waylandState->letterCombinationsWidth = 1;
 		waylandState->letterCombinationsToClickTargets.clear();
 		std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
@@ -521,7 +537,7 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	waylandState->screenCopyFrame = zwlr_screencopy_manager_v1_capture_output
 	(
 		waylandState->screenCopyManager,
-		false,
+		false, //overlay cursor
 		waylandState->outputs[waylandState->selectedOutputIndex]
 	);
 	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
@@ -673,6 +689,7 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 		}
 	}
 
+	std::cout << "clickTargets.size() " << clickTargets.size() << std::endl;
 	for(size_t x = 0; x < clickTargets.size(); ++x)
 	{
 		cv::rectangle
@@ -772,9 +789,6 @@ void layerSurfaceConfigure
 	waylandState->sharedMemoryWidth = width;
 	waylandState->sharedMemoryHeight = height;
 	waylandState->sharedMemoryStride = width * 4;
-	//waylandState->sharedMemoryWidth = waylandState->outputsDimensions[waylandState->selectedOutputIndex].width;
-	//waylandState->sharedMemoryHeight = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height;
-	//waylandState->sharedMemoryStride = waylandState->outputsDimensions[waylandState->selectedOutputIndex].height * 4;
 
 	waylandState->sharedMemoryFrameSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
 	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryFrameSize * waylandState->sharedMemoryNBuffers;
@@ -1074,29 +1088,11 @@ std::unordered_map<std::string, Action> stringToAction =
 	{ "middleDrag", Action::middleDrag }
 };
 
-int main(int argc, char** argv)
+void keyboardMouse(std::string targetMonitorName, Action action, bool displayGrid, int keyboardFileDescriptor)
 {
-	Action action = Action::leftClick;
-	bool dragActionMouseDown = false;
-
 	WaylandState waylandState;
-
-	std::string targetMonitorName;
-	if(argc >= 2)
-	{
-		targetMonitorName = argv[1];
-	}
-	if(argc >= 3)
-	{
-		if(stringToAction.count(argv[2]))
-		{
-			action = stringToAction.at(argv[2]);
-		}
-	}
-	if(argc >= 4)
-	{
-		waylandState.displayGrid = false;
-	}
+	waylandState.displayGrid = displayGrid;
+	bool dragActionMouseDown = false;
 
 	waylandState.display = wl_display_connect(getenv("WAYLAND_DISPLAY"));
 	if(!waylandState.display)
@@ -1200,6 +1196,303 @@ int main(int argc, char** argv)
 	wl_surface_commit(waylandState.surface);
 	wl_display_flush(waylandState.display);
 
+	input_event inputEvent;
+	while
+	(
+		!waylandState.layerSurfaceShouldClose &&
+		!waylandState.shouldActionAndExit &&
+		wl_display_dispatch(waylandState.display) != -1
+	)
+	{
+		ssize_t inputEventReadSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
+		if(inputEventReadSize == (ssize_t)(-1))
+		{
+			perror("error reading input device inputEvent!");
+			break;
+		}
+		if(inputEventReadSize == (ssize_t)(0))
+		{
+			std::cout << "nothing read from inputEvent. EOF maybe?" << std::endl;
+			break;
+		}
+
+		if(inputEvent.type == EV_KEY)
+		{
+			if(inputEvent.value == 1) //pressed
+			{
+				switch(inputEvent.code)
+				{
+					case KEY_ESC:
+					{
+						if(waylandState.userKeyboardInput.size() > 0)
+						{
+							waylandState.userKeyboardInput.clear();
+						} else
+						{
+							waylandState.layerSurfaceShouldClose = true;
+						}
+						break;
+					}
+
+					case KEY_BACKSPACE:
+					{
+						if(waylandState.userKeyboardInput.size() > 0)
+						{
+							waylandState.userKeyboardInput.pop_back();
+						}
+						break;
+					}
+
+					case KEY_LEFTSHIFT:
+					{
+						virtualPointerLeftDown(waylandState);
+						break;
+					}
+					case KEY_RIGHTSHIFT:
+					{
+						virtualPointerRightDown(waylandState);
+						break;
+					}
+
+					default:
+					{
+						char inputEventCodeAsAscii = '\0';
+						try
+						{
+							inputEventCodeAsAscii = inputEventCodeToAscii.at(inputEvent.code);
+						} catch(...)
+						{
+							inputEventCodeAsAscii = '?';
+						}
+
+						waylandState.userKeyboardInput += inputEventCodeAsAscii;
+						if
+						(
+							waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
+							(
+								waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
+								waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput) == 0
+							) ||
+							inputEventCodeAsAscii < 'A' ||
+							inputEventCodeAsAscii > 'Z'
+						)
+						{
+							drawFrame(&waylandState);
+							wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
+							wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
+							wl_surface_commit(waylandState.surface);
+							waylandState.userKeyboardInput.clear();
+							break;
+						}
+						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
+						{
+							virtualPointerMoveAbsolute
+							(
+								waylandState,
+								waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
+								waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
+							);
+
+							if
+							(
+								!waylandState.displayGrid ||
+								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
+							)
+							{
+								drawFrame(&waylandState);
+								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
+								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
+								wl_surface_commit(waylandState.surface);
+								switch(action)
+								{
+									case Action::move:
+									{
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::leftClick:
+									{
+										virtualPointerLeftClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::rightClick:
+									{
+										virtualPointerRightClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::middleClick:
+									{
+										virtualPointerRightClick(waylandState);
+										waylandState.shouldActionAndExit = true;
+										break;
+									}
+									case Action::leftDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerLeftUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerLeftDown(waylandState);
+											resetDrawGridFrameVariables(waylandState);
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+									case Action::rightDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerRightUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerRightDown(waylandState);
+											resetDrawGridFrameVariables(waylandState);
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+									case Action::middleDrag:
+									{
+										if(dragActionMouseDown)
+										{
+											virtualPointerMiddleUp(waylandState);
+											waylandState.shouldActionAndExit = true;
+										} else
+										{
+											virtualPointerMiddleDown(waylandState);
+											resetDrawGridFrameVariables(waylandState);
+										}
+										dragActionMouseDown = !dragActionMouseDown;
+										break;
+									}
+								}
+							} else
+							{
+								waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
+								waylandState.userKeyboardInput.clear();
+								waylandState.shouldRedrawGridFrame = true;
+							}
+						}
+						break;
+					}
+				}
+			} else
+			{
+				switch(inputEvent.code)
+				{
+					case KEY_LEFTSHIFT:
+					{
+						virtualPointerLeftUp(waylandState);
+						break;
+					}
+					case KEY_RIGHTSHIFT:
+					{
+						virtualPointerRightUp(waylandState);
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	//cleanup
+	if(waylandState.registry)
+	{
+		wl_registry_destroy(waylandState.registry);
+	}
+	if(waylandState.compositor)
+	{
+		wl_compositor_destroy(waylandState.compositor);
+	}
+	if(!waylandState.outputs.empty())
+	{
+		for(size_t x = 0; x < waylandState.outputs.size(); ++x)
+		{
+			wl_output_destroy(waylandState.outputs[x]);
+		}
+	}
+	if(!waylandState.xdgOutputManager)
+	{
+		zxdg_output_manager_v1_destroy(waylandState.xdgOutputManager);
+	}
+	for(size_t x = 0; x < zxdgOutputs.size(); x++)
+	{
+		zxdg_output_v1_destroy(zxdgOutputs[x]);
+	}
+	if(waylandState.sharedMemory)
+	{
+		wl_shm_destroy(waylandState.sharedMemory);
+	}
+	if(waylandState.surface)
+	{
+		wl_surface_destroy(waylandState.surface);
+	}
+	if(waylandState.screenshotBuffer)
+	{
+		wl_buffer_destroy(waylandState.screenshotBuffer);
+	}
+	if(waylandState.buffer)
+	{
+		wl_buffer_destroy(waylandState.buffer);
+	}
+	if(waylandState.layerShell)
+	{
+		zwlr_layer_shell_v1_destroy(waylandState.layerShell);
+	}
+	if(waylandState.layerSurface)
+	{
+		zwlr_layer_surface_v1_destroy(waylandState.layerSurface);
+	}
+	if(waylandState.seat)
+	{
+		wl_seat_destroy(waylandState.seat);
+	}
+	if(waylandState.region)
+	{
+		wl_region_destroy(waylandState.region);
+	}
+	if(waylandState.screenCopyManager)
+	{
+		zwlr_screencopy_manager_v1_destroy(waylandState.screenCopyManager);
+	}
+	if(waylandState.screenCopyFrame)
+	{
+		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
+	}
+	if(waylandState.virtualPointerManager)
+	{
+		zwlr_virtual_pointer_manager_v1_destroy(waylandState.virtualPointerManager);
+	}
+	if(waylandState.virtualPointer)
+	{
+		zwlr_virtual_pointer_v1_destroy(waylandState.virtualPointer);
+	}
+
+	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
+	close(waylandState.sharedMemoryPoolFileDescriptor);
+	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
+
+	if(waylandState.display)
+	{
+		//must be called last!
+		wl_display_disconnect(waylandState.display);
+		std::cout << "disconnected from waylandDisplay" << std::endl;
+	}
+}
+
+int main(int argc, char** argv)
+{
+	std::string targetMonitorName;
+	if(argc >= 2)
+	{
+		targetMonitorName = argv[1];
+	}
+
 	const std::filesystem::path datFolderFilePath("./dat/");
 	const std::filesystem::path keyboardTargetTextFilePath("./dat/keyboardTarget.txt");
 	const std::filesystem::path eventDeviceFolderPath("/dev/input/");
@@ -1295,15 +1588,10 @@ int main(int argc, char** argv)
 		perror("something went wrong while opening device...");
 		exit(EXIT_FAILURE);
 	}
-	ioctl(keyboardFileDescriptor, EVIOCGRAB, 1);
 
+	bool running = true;
 	input_event inputEvent;
-	while
-	(
-		!waylandState.layerSurfaceShouldClose &&
-		!waylandState.shouldActionAndExit &&
-		wl_display_dispatch(waylandState.display) != -1
-	)
+	while(running)
 	{
 		ssize_t inputEventReadSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
 		if(inputEventReadSize == (ssize_t)(-1))
@@ -1316,299 +1604,36 @@ int main(int argc, char** argv)
 			std::cout << "nothing read from inputEvent. EOF maybe?" << std::endl;
 			break;
 		}
-
 		if(inputEvent.type == EV_KEY)
 		{
+			std::cout << "code: " << inputEvent.code << std::endl;
 			if(inputEvent.value == 1) //pressed
 			{
 				switch(inputEvent.code)
 				{
 					case KEY_ESC:
 					{
-						if(waylandState.userKeyboardInput.size() > 0)
-						{
-							waylandState.userKeyboardInput.clear();
-						} else
-						{
-							waylandState.layerSurfaceShouldClose = true;
-						}
-						break;
-					}
-
-					case KEY_BACKSPACE:
-					{
-						if(waylandState.userKeyboardInput.size() > 0)
-						{
-							waylandState.userKeyboardInput.pop_back();
-						}
-						break;
-					}
-
-					case KEY_LEFTSHIFT:
-					{
-						virtualPointerLeftDown(waylandState);
-						break;
-					}
-					case KEY_RIGHTSHIFT:
-					{
-						virtualPointerRightDown(waylandState);
-						break;
-					}
-
-					default:
-					{
-						waylandState.userKeyboardInput += inputEventCodeToAscii[inputEvent.code];
-						if
-						(
-							waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
-							(
-								waylandState.userKeyboardInput.size() == waylandState.letterCombinationsWidth &&
-								waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput) == 0
-							) ||
-							inputEventCodeToAscii[inputEvent.code] < 'A' ||
-							inputEventCodeToAscii[inputEvent.code] > 'Z'
-						)
-						{
-							drawFrame(&waylandState);
-							wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
-							wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
-							wl_surface_commit(waylandState.surface);
-							waylandState.userKeyboardInput.clear();
-							break;
-						}
-						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
-						{
-							virtualPointerMoveAbsolute
-							(
-								waylandState,
-								waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
-								waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
-							);
-
-							if
-							(
-								!waylandState.displayGrid ||
-								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
-							)
-							{
-								drawFrame(&waylandState);
-								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
-								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
-								wl_surface_commit(waylandState.surface);
-								switch(action)
-								{
-									case Action::move:
-									{
-										waylandState.shouldActionAndExit = true;
-										break;
-									}
-									case Action::leftClick:
-									{
-										virtualPointerLeftClick(waylandState);
-										waylandState.shouldActionAndExit = true;
-										break;
-									}
-									case Action::rightClick:
-									{
-										virtualPointerRightClick(waylandState);
-										waylandState.shouldActionAndExit = true;
-										break;
-									}
-									case Action::middleClick:
-									{
-										virtualPointerRightClick(waylandState);
-										waylandState.shouldActionAndExit = true;
-										break;
-									}
-									case Action::leftDrag:
-									{
-										if(dragActionMouseDown)
-										{
-											virtualPointerLeftUp(waylandState);
-											waylandState.shouldActionAndExit = true;
-										} else
-										{
-											virtualPointerLeftDown(waylandState);
-											waylandState.drawAreaResizeCount = 0;
-											waylandState.userKeyboardInput.clear();
-											waylandState.layeredLetterCombinationsToClickTargets.clear();
-											waylandState.letterCombinationsToClickTargets.clear();
-											waylandState.drawArea = cv::Rect
-											(
-												0,
-												0,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
-											);
-											waylandState.virtualPointerHasJumped = true;
-										}
-										dragActionMouseDown = !dragActionMouseDown;
-										break;
-									}
-									case Action::rightDrag:
-									{
-										if(dragActionMouseDown)
-										{
-											virtualPointerRightUp(waylandState);
-											waylandState.shouldActionAndExit = true;
-										} else
-										{
-											virtualPointerRightDown(waylandState);
-											waylandState.drawAreaResizeCount = 0;
-											waylandState.userKeyboardInput.clear();
-											waylandState.layeredLetterCombinationsToClickTargets.clear();
-											waylandState.letterCombinationsToClickTargets.clear();
-											waylandState.drawArea = cv::Rect
-											(
-												0,
-												0,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
-											);
-											waylandState.virtualPointerHasJumped = true;
-										}
-										dragActionMouseDown = !dragActionMouseDown;
-										break;
-									}
-									case Action::middleDrag:
-									{
-										if(dragActionMouseDown)
-										{
-											virtualPointerMiddleUp(waylandState);
-											waylandState.shouldActionAndExit = true;
-										} else
-										{
-											virtualPointerMiddleDown(waylandState);
-											waylandState.drawAreaResizeCount = 0;
-											waylandState.userKeyboardInput.clear();
-											waylandState.layeredLetterCombinationsToClickTargets.clear();
-											waylandState.letterCombinationsToClickTargets.clear();
-											waylandState.drawArea = cv::Rect
-											(
-												0,
-												0,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
-												waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
-											);
-											waylandState.virtualPointerHasJumped = true;
-										}
-										dragActionMouseDown = !dragActionMouseDown;
-										break;
-									}
-								}
-							} else
-							{
-								waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
-								waylandState.userKeyboardInput.clear();
-								waylandState.virtualPointerHasJumped = true;
-							}
-						}
+						running = false;
 						break;
 					}
 				}
-			} else
+			} else if(inputEvent.value == 0) //released
 			{
+				ioctl(keyboardFileDescriptor, EVIOCGRAB, 1);
 				switch(inputEvent.code)
 				{
-					case KEY_LEFTSHIFT:
-					{
-						virtualPointerLeftUp(waylandState);
+					case KEY_EQUAL:
+						keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor);
 						break;
-					}
-					case KEY_RIGHTSHIFT:
-					{
-						virtualPointerRightUp(waylandState);
+					case KEY_MINUS:
+						keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor);
 						break;
-					}
 				}
+				ioctl(keyboardFileDescriptor, EVIOCGRAB, 0);
 			}
 		}
 	}
-	ioctl(keyboardFileDescriptor, EVIOCGRAB, 0);
 	close(keyboardFileDescriptor);
-
-	//cleanup
-	if(waylandState.registry)
-	{
-		wl_registry_destroy(waylandState.registry);
-	}
-	if(waylandState.compositor)
-	{
-		wl_compositor_destroy(waylandState.compositor);
-	}
-	if(!waylandState.outputs.empty())
-	{
-		for(size_t x = 0; x < waylandState.outputs.size(); ++x)
-		{
-			wl_output_destroy(waylandState.outputs[x]);
-		}
-	}
-	if(!waylandState.xdgOutputManager)
-	{
-		zxdg_output_manager_v1_destroy(waylandState.xdgOutputManager);
-	}
-	for(size_t x = 0; x < zxdgOutputs.size(); x++)
-	{
-		zxdg_output_v1_destroy(zxdgOutputs[x]);
-	}
-	if(waylandState.sharedMemory)
-	{
-		wl_shm_destroy(waylandState.sharedMemory);
-	}
-	if(waylandState.surface)
-	{
-		wl_surface_destroy(waylandState.surface);
-	}
-	if(waylandState.screenshotBuffer)
-	{
-		wl_buffer_destroy(waylandState.screenshotBuffer);
-	}
-	if(waylandState.buffer)
-	{
-		wl_buffer_destroy(waylandState.buffer);
-	}
-	if(waylandState.layerShell)
-	{
-		zwlr_layer_shell_v1_destroy(waylandState.layerShell);
-	}
-	if(waylandState.layerSurface)
-	{
-		zwlr_layer_surface_v1_destroy(waylandState.layerSurface);
-	}
-	if(waylandState.seat)
-	{
-		wl_seat_destroy(waylandState.seat);
-	}
-	if(waylandState.region)
-	{
-		wl_region_destroy(waylandState.region);
-	}
-	if(waylandState.screenCopyManager)
-	{
-		zwlr_screencopy_manager_v1_destroy(waylandState.screenCopyManager);
-	}
-	if(waylandState.screenCopyFrame)
-	{
-		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
-	}
-	if(waylandState.virtualPointerManager)
-	{
-		zwlr_virtual_pointer_manager_v1_destroy(waylandState.virtualPointerManager);
-	}
-	if(waylandState.virtualPointer)
-	{
-		zwlr_virtual_pointer_v1_destroy(waylandState.virtualPointer);
-	}
-
-	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
-	close(waylandState.sharedMemoryPoolFileDescriptor);
-	munmap(waylandState.sharedMemoryPoolData, waylandState.sharedMemoryPoolSize);
-
-	if(waylandState.display)
-	{
-		//must be called last!
-		wl_display_disconnect(waylandState.display);
-	}
 
 	return 0;
 }

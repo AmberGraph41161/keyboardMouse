@@ -39,6 +39,8 @@ A project inspired by:
 - [stackoverflow](https://stackoverflow.com)
     - [Linux: Canceling input from /dev/input/event\*](https://stackoverflow.com/questions/68713392/linux-canceling-input-from-dev-input-event) for showing me how to 'eat' key events
     - [input\_event structure description (from linux/input.h)](https://stackoverflow.com/questions/16695432/input-event-structure-description-from-linux-input-h)
+    - [Why does \`ioctl(fd, EVIOCGRAB, 1)\` cause key spam sometimes?](https://stackoverflow.com/questions/41995349/why-does-ioctlfd-eviocgrab-1-cause-key-spam-sometimes) for giving me ideas on how to work around this
+- [Linux Kernel Documentation, Input event codes](https://docs.kernel.org/input/event-codes.html) for documentation on evdev and other related stuff
 
 # Please view only
 

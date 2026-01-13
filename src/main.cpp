@@ -1589,9 +1589,11 @@ int main(int argc, char** argv)
 		exit(EXIT_FAILURE);
 	}
 
-	bool running = true;
+
+	bool escapeKeyDown = false;
+	bool deleteKeyDown = false;
 	input_event inputEvent;
-	while(running)
+	while(!escapeKeyDown || !deleteKeyDown)
 	{
 		ssize_t inputEventReadSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
 		if(inputEventReadSize == (ssize_t)(-1))
@@ -1606,31 +1608,43 @@ int main(int argc, char** argv)
 		}
 		if(inputEvent.type == EV_KEY)
 		{
-			std::cout << "code: " << inputEvent.code << std::endl;
+			//note to self as of Sunday, December 28, 2025, 17:29:59
+			//use automationUtils to make virtualkeyboard that "forwards" keyboard events? have EVIOCGRAB alr? idk
+			ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
 			if(inputEvent.value == 1) //pressed
 			{
 				switch(inputEvent.code)
 				{
 					case KEY_ESC:
-					{
-						running = false;
+						escapeKeyDown = true;
 						break;
-					}
+					case KEY_DELETE:
+						deleteKeyDown = true;
+						break;
+					case KEY_CONFIG:
+						keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor);
+						inputEvent.value = 0;
+						write(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
+						break;
+					case KEY_BOOKMARKS:
+						keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor);
+						inputEvent.value = 0;
+						write(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
+						break;
 				}
 			} else if(inputEvent.value == 0) //released
 			{
-				ioctl(keyboardFileDescriptor, EVIOCGRAB, 1);
 				switch(inputEvent.code)
 				{
-					case KEY_EQUAL:
-						keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor);
+					case KEY_ESC:
+						escapeKeyDown = false;
 						break;
-					case KEY_MINUS:
-						keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor);
+					case KEY_DELETE:
+						deleteKeyDown = false;
 						break;
 				}
-				ioctl(keyboardFileDescriptor, EVIOCGRAB, 0);
 			}
+			ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 		}
 	}
 	close(keyboardFileDescriptor);

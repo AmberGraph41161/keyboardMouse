@@ -2,7 +2,7 @@ CFLAGS := -Wall -g
 CXXFLAGS := -Wall -std=c++17 -g
 CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc
 
-main: build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o build/wlr-virtual-pointer-unstable-v1.o build/xdg-output-unstable-v1.o
+keyboardMouse: build/main.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o build/wlr-virtual-pointer-unstable-v1.o build/xdg-output-unstable-v1.o
 	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^
 
 build/main.o: src/main.cpp

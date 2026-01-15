@@ -270,13 +270,12 @@ Keyboard::Keyboard()
 	ioctl(fileDescriptor, UI_DEV_CREATE);
 }
 
-void Keyboard::sendKey(Keycode key)
+void Keyboard::sendKey(int uinputKeycode)
 {
-	int sendThisKey = static_cast<int>(key);
-	emit(fileDescriptor, EV_KEY, sendThisKey, 1);
+	emit(fileDescriptor, EV_KEY, uinputKeycode, 1);
 	emit(fileDescriptor, EV_SYN, SYN_REPORT, 0);
 	std::this_thread::sleep_for(std::chrono::milliseconds(recommendedMillisecondsSleepBetweenActions));
-	emit(fileDescriptor, EV_KEY, sendThisKey, 0);
+	emit(fileDescriptor, EV_KEY, uinputKeycode, 0);
 	emit(fileDescriptor, EV_SYN, SYN_REPORT, 0);
 	std::this_thread::sleep_for(std::chrono::milliseconds(recommendedMillisecondsSleepBetweenActions));
 }

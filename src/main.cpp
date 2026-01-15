@@ -1,4 +1,6 @@
+#include <chrono>
 #include <iostream>
+#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -18,7 +20,6 @@
 #include <wayland-client.h>
 #include "wlr-layer-shell-unstable-v1.h"
 #include "wlr-screencopy-unstable-v1.h"
-#include "wlr-virtual-pointer-unstable-v1.h"
 #include "xdg-output-unstable-v1.h"
 
 #include <time.h>
@@ -30,6 +31,10 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+
+#include "keyboard.hpp"
+#include "mouse.hpp"
+#include "absolutePointer.hpp"
 
 void randname(char* buf)
 {
@@ -151,13 +156,10 @@ struct WaylandState
 	uint32_t screenCopyFlags;
 	bool screenCopyBufferWasHandled = false;
 
-	zwlr_virtual_pointer_manager_v1* virtualPointerManager;
-	zwlr_virtual_pointer_v1* virtualPointer;
-	uint32_t virtualPointerTime = 0;
-	uint32_t virtualPointerXExtent = 0;
-	uint32_t virtualPointerYExtent = 0;
-	uint32_t virtualPointerXOrigin = 0;
-	uint32_t virtualPointerYOrigin = 0;
+	uint32_t mouseXExtent = 0;
+	uint32_t mouseYExtent = 0;
+	uint32_t mouseXOrigin = 0;
+	uint32_t mouseYOrigin = 0;
 	bool shouldRedrawGridFrame = true;
 	bool shouldActionAndExit = false;
 
@@ -908,108 +910,6 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	wl_surface_commit(waylandState->surface);
 }
 
-void virtualPointerMoveAbsolute(WaylandState& waylandState, uint32_t x, uint32_t y)
-{
-	zwlr_virtual_pointer_v1_motion_absolute
-	(
-		waylandState.virtualPointer,
-		waylandState.virtualPointerTime,
-		x,
-		y,
-		waylandState.virtualPointerXExtent,
-		waylandState.virtualPointerYExtent
-	);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerLeftDown(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerLeftUp(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-void virtualPointerLeftClick(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerRightDown(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerRightUp(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerRightClick(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_RIGHT, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerMiddleDown(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerMiddleUp(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
-void virtualPointerMiddleClick(WaylandState& waylandState)
-{
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_PRESSED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-
-	zwlr_virtual_pointer_v1_button(waylandState.virtualPointer, waylandState.virtualPointerTime, BTN_MIDDLE, WL_POINTER_BUTTON_STATE_RELEASED);
-	++waylandState.virtualPointerTime;
-	zwlr_virtual_pointer_v1_frame(waylandState.virtualPointer);
-	wl_display_flush(waylandState.display);
-}
-
 void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
@@ -1035,9 +935,6 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 	} else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0)
 	{
 		waylandState->screenCopyManager = static_cast<zwlr_screencopy_manager_v1*>(wl_registry_bind(registry, name, &zwlr_screencopy_manager_v1_interface, 1));
-	} else if(strcmp(interface, zwlr_virtual_pointer_manager_v1_interface.name) == 0)
-	{
-		waylandState->virtualPointerManager = static_cast<zwlr_virtual_pointer_manager_v1*>(wl_registry_bind(registry, name, &zwlr_virtual_pointer_manager_v1_interface, version));
 	}
 }
 
@@ -1126,8 +1023,8 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 		if(waylandState.outputsNames[x] == targetMonitorName)
 		{
 			waylandState.selectedOutputIndex = x;
-			waylandState.virtualPointerXOrigin = waylandState.outputsPositions[x].x;
-			waylandState.virtualPointerYOrigin = waylandState.outputsPositions[x].y;
+			waylandState.mouseXOrigin = waylandState.outputsPositions[x].x;
+			waylandState.mouseYOrigin = waylandState.outputsPositions[x].y;
 			break;
 		}
 	}
@@ -1135,28 +1032,23 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	{
 		std::cerr << "failed to find monitor named \"" << targetMonitorName << "\"!" << std::endl;
 		waylandState.selectedOutputIndex = 0;
-		waylandState.virtualPointerXOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].x;
-		waylandState.virtualPointerYOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].y;
+		waylandState.mouseXOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].x;
+		waylandState.mouseYOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].y;
 	}
 
 	for(size_t x = 0; x < waylandState.outputsDimensions.size(); x++)
 	{
-		if(waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width > waylandState.virtualPointerXExtent)
+		if(waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width > waylandState.mouseXExtent)
 		{
-			 waylandState.virtualPointerXExtent = waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width;
+			 waylandState.mouseXExtent = waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width;
 		}
-		if(waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height > waylandState.virtualPointerYExtent)
+		if(waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height > waylandState.mouseYExtent)
 		{
-			 waylandState.virtualPointerYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height;
+			 waylandState.mouseYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height;
 		}
 	}
-
-	waylandState.virtualPointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(waylandState.virtualPointerManager, waylandState.seat);
-	if(waylandState.virtualPointer == nullptr)
-	{
-		std::cerr << "failed to create virtual pointer!" << std::endl;
-		exit(EXIT_FAILURE);
-	}
+	Mouse mouse;
+	AbsolutePointer absolutePointer(waylandState.mouseXOrigin, waylandState.mouseXExtent, waylandState.mouseYOrigin, waylandState.mouseYExtent);
 
 	waylandState.layerSurfaceShouldClose = false;
 	waylandState.surface = wl_compositor_create_surface(waylandState.compositor);
@@ -1243,17 +1135,6 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 						break;
 					}
 
-					case KEY_LEFTSHIFT:
-					{
-						virtualPointerLeftDown(waylandState);
-						break;
-					}
-					case KEY_RIGHTSHIFT:
-					{
-						virtualPointerRightDown(waylandState);
-						break;
-					}
-
 					default:
 					{
 						char inputEventCodeAsAscii = '\0';
@@ -1286,12 +1167,12 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 						}
 						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
 						{
-							virtualPointerMoveAbsolute
+							absolutePointer.moveAbsolute
 							(
-								waylandState,
-								waylandState.virtualPointerXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
-								waylandState.virtualPointerYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
+								waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
+								waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
 							);
+							std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 							if
 							(
@@ -1312,19 +1193,19 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 									}
 									case Action::leftClick:
 									{
-										virtualPointerLeftClick(waylandState);
+										mouse.leftClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
 									case Action::rightClick:
 									{
-										virtualPointerRightClick(waylandState);
+										mouse.rightClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
 									case Action::middleClick:
 									{
-										virtualPointerRightClick(waylandState);
+										mouse.middleClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
@@ -1332,11 +1213,11 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 									{
 										if(dragActionMouseDown)
 										{
-											virtualPointerLeftUp(waylandState);
+											mouse.leftUp();
 											waylandState.shouldActionAndExit = true;
 										} else
 										{
-											virtualPointerLeftDown(waylandState);
+											mouse.leftDown();
 											resetDrawGridFrameVariables(waylandState);
 										}
 										dragActionMouseDown = !dragActionMouseDown;
@@ -1346,11 +1227,11 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 									{
 										if(dragActionMouseDown)
 										{
-											virtualPointerRightUp(waylandState);
+											mouse.rightUp();
 											waylandState.shouldActionAndExit = true;
 										} else
 										{
-											virtualPointerRightDown(waylandState);
+											mouse.rightDown();
 											resetDrawGridFrameVariables(waylandState);
 										}
 										dragActionMouseDown = !dragActionMouseDown;
@@ -1360,11 +1241,11 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 									{
 										if(dragActionMouseDown)
 										{
-											virtualPointerMiddleUp(waylandState);
+											mouse.middleUp();
 											waylandState.shouldActionAndExit = true;
 										} else
 										{
-											virtualPointerMiddleDown(waylandState);
+											mouse.middleDown();
 											resetDrawGridFrameVariables(waylandState);
 										}
 										dragActionMouseDown = !dragActionMouseDown;
@@ -1385,16 +1266,6 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 			{
 				switch(inputEvent.code)
 				{
-					case KEY_LEFTSHIFT:
-					{
-						virtualPointerLeftUp(waylandState);
-						break;
-					}
-					case KEY_RIGHTSHIFT:
-					{
-						virtualPointerRightUp(waylandState);
-						break;
-					}
 				}
 			}
 		}
@@ -1464,14 +1335,6 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	{
 		zwlr_screencopy_frame_v1_destroy(waylandState.screenCopyFrame);
 	}
-	if(waylandState.virtualPointerManager)
-	{
-		zwlr_virtual_pointer_manager_v1_destroy(waylandState.virtualPointerManager);
-	}
-	if(waylandState.virtualPointer)
-	{
-		zwlr_virtual_pointer_v1_destroy(waylandState.virtualPointer);
-	}
 
 	wl_shm_pool_destroy(waylandState.sharedMemoryPool);
 	close(waylandState.sharedMemoryPoolFileDescriptor);
@@ -1493,13 +1356,15 @@ int main(int argc, char** argv)
 		targetMonitorName = argv[1];
 	}
 
-	const std::filesystem::path datFolderFilePath("./dat/");
-	const std::filesystem::path keyboardTargetTextFilePath("./dat/keyboardTarget.txt");
+	const std::filesystem::path keyboardMouseRootDir(getenv("keyboardMouseRootDir"));
+	const std::filesystem::path datFolderFilePath(keyboardMouseRootDir / "dat/");
+	const std::filesystem::path keyboardTargetTextFilePath(keyboardMouseRootDir / "dat/keyboardTarget.txt");
 	const std::filesystem::path eventDeviceFolderPath("/dev/input/");
 
 	if(!std::filesystem::exists(datFolderFilePath))
 	{
 		std::cerr << datFolderFilePath << " doesn't exist! creating " << datFolderFilePath << " folder..." << std::endl;
+		return -1;
 		if(!std::filesystem::create_directory(datFolderFilePath))
 		{
 			std::cerr << "failed to create " << datFolderFilePath << " folder! aborting!" << std::endl;
@@ -1589,6 +1454,11 @@ int main(int argc, char** argv)
 		exit(EXIT_FAILURE);
 	}
 
+	Keyboard keyboard;
+	keyboard.sendKey(Keycode::W);
+	keyboard.sendKey(Keycode::H);
+	keyboard.sendKey(Keycode::A);
+	keyboard.sendKey(Keycode::T);
 
 	bool escapeKeyDown = false;
 	bool deleteKeyDown = false;

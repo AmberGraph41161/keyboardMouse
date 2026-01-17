@@ -32,7 +32,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 
-#include "keyboard.hpp"
 #include "mouse.hpp"
 #include "absolutePointer.hpp"
 
@@ -1167,12 +1166,9 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 						}
 						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
 						{
-							absolutePointer.moveAbsolute
-							(
-								waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x,
-								waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y
-							);
-							std::this_thread::sleep_for(std::chrono::milliseconds(100));
+							int absoluteX = waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x;
+							int absoluteY = waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y;
+							absolutePointer.moveAbsolute(absoluteX, absoluteY);
 
 							if
 							(
@@ -1454,17 +1450,18 @@ int main(int argc, char** argv)
 		exit(EXIT_FAILURE);
 	}
 
-	Keyboard keyboard;
-	keyboard.sendKey(Keycode::W);
-	keyboard.sendKey(Keycode::H);
-	keyboard.sendKey(Keycode::A);
-	keyboard.sendKey(Keycode::T);
+	std::chrono::time_point<std::chrono::high_resolution_clock> previousShiftClickTime = std::chrono::high_resolution_clock::now();
+	std::chrono::time_point<std::chrono::high_resolution_clock> currentShiftClickTime = previousShiftClickTime;
+	std::chrono::time_point<std::chrono::high_resolution_clock> currentAltClickTime = previousShiftClickTime;
+	std::chrono::time_point<std::chrono::high_resolution_clock> previousAltClickTime = previousShiftClickTime;
+	std::chrono::milliseconds doubleClickkMillisecondsThreshold(200);
 
 	bool escapeKeyDown = false;
 	bool deleteKeyDown = false;
-	input_event inputEvent;
 	while(!escapeKeyDown || !deleteKeyDown)
 	{
+		input_event inputEvent;
+
 		ssize_t inputEventReadSize = read(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
 		if(inputEventReadSize == (ssize_t)(-1))
 		{
@@ -1478,9 +1475,6 @@ int main(int argc, char** argv)
 		}
 		if(inputEvent.type == EV_KEY)
 		{
-			//note to self as of Sunday, December 28, 2025, 17:29:59
-			//use automationUtils to make virtualkeyboard that "forwards" keyboard events? have EVIOCGRAB alr? idk
-			ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
 			if(inputEvent.value == 1) //pressed
 			{
 				switch(inputEvent.code)
@@ -1490,16 +1484,6 @@ int main(int argc, char** argv)
 						break;
 					case KEY_DELETE:
 						deleteKeyDown = true;
-						break;
-					case KEY_CONFIG:
-						keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor);
-						inputEvent.value = 0;
-						write(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
-						break;
-					case KEY_BOOKMARKS:
-						keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor);
-						inputEvent.value = 0;
-						write(keyboardFileDescriptor, &inputEvent, sizeof(inputEvent));
 						break;
 				}
 			} else if(inputEvent.value == 0) //released
@@ -1512,9 +1496,36 @@ int main(int argc, char** argv)
 					case KEY_DELETE:
 						deleteKeyDown = false;
 						break;
+					case KEY_LEFTALT:
+					case KEY_RIGHTALT:
+					{
+						currentAltClickTime = std::chrono::high_resolution_clock::now();
+						std::chrono::duration<double> previousAltclickToCurrentAltClickDurationMilliseconds = currentAltClickTime - previousAltClickTime;
+						if(previousAltclickToCurrentAltClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
+						{
+							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
+							keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor); //opencv
+							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
+						}
+						previousAltClickTime = currentAltClickTime;
+						break;
+					}
+					case KEY_LEFTSHIFT:
+					case KEY_RIGHTSHIFT:
+					{
+						currentShiftClickTime = std::chrono::high_resolution_clock::now();
+						std::chrono::duration<double> previousShiftclickToCurrentShiftClickDurationMilliseconds = currentShiftClickTime - previousShiftClickTime;
+						if(previousShiftclickToCurrentShiftClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
+						{
+							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
+							keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor); //opencv
+							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
+						}
+						previousShiftClickTime = currentShiftClickTime;
+						break;
+					}
 				}
 			}
-			ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 		}
 	}
 	close(keyboardFileDescriptor);

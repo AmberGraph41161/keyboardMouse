@@ -8,10 +8,10 @@
 
 AbsolutePointer::AbsolutePointer
 (
-	unsigned int absoluteAbsolutePointerXMinimum,
-	unsigned int absoluteAbsolutePointerXMaximum,
-	unsigned int absoluteAbsolutePointerYMinimum,
-	unsigned int absoluteAbsolutePointerYMaximum
+	unsigned int absolutePointerXMinimum,
+	unsigned int absolutePointerXMaximum,
+	unsigned int absolutePointerYMinimum,
+	unsigned int absolutePointerYMaximum
 )
 {
 	fileDescriptor = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
@@ -27,16 +27,16 @@ AbsolutePointer::AbsolutePointer
 	ioctl(fileDescriptor, UI_SET_ABSBIT, ABS_Y);
 	uinput_abs_setup uinputAbsoluteXSetup;
 	uinputAbsoluteXSetup.code = ABS_X;
-	uinputAbsoluteXSetup.absinfo.minimum = absoluteAbsolutePointerXMinimum;
-	uinputAbsoluteXSetup.absinfo.maximum = absoluteAbsolutePointerXMaximum;
+	uinputAbsoluteXSetup.absinfo.minimum = absolutePointerXMinimum;
+	uinputAbsoluteXSetup.absinfo.maximum = absolutePointerXMaximum;
 	uinputAbsoluteXSetup.absinfo.fuzz = 0;
 	uinputAbsoluteXSetup.absinfo.flat = 0;
 	uinputAbsoluteXSetup.absinfo.resolution = 1;
 	ioctl(fileDescriptor, UI_ABS_SETUP, &uinputAbsoluteXSetup);
 	uinput_abs_setup uinputAbsoluteYSetup;
 	uinputAbsoluteYSetup.code = ABS_Y;
-	uinputAbsoluteYSetup.absinfo.minimum = absoluteAbsolutePointerYMinimum;
-	uinputAbsoluteYSetup.absinfo.maximum = absoluteAbsolutePointerYMaximum;
+	uinputAbsoluteYSetup.absinfo.minimum = absolutePointerYMinimum;
+	uinputAbsoluteYSetup.absinfo.maximum = absolutePointerYMaximum;
 	uinputAbsoluteYSetup.absinfo.fuzz = 0;
 	uinputAbsoluteYSetup.absinfo.flat = 0;
 	uinputAbsoluteYSetup.absinfo.resolution = 1;

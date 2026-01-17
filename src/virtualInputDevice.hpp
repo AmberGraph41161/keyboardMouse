@@ -10,6 +10,7 @@ protected:
 	~VirtualInputDevice();
 
 protected:
+	void emit(int fileDescriptor, input_event inputEvent);
 	void emit(int fileDescriptor, int type, int code, int val);
 
 public:

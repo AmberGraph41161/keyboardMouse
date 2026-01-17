@@ -10,10 +10,10 @@ class AbsolutePointer : public VirtualInputDevice
 public:
 	AbsolutePointer
 	(
-		unsigned int absoluteMouseXMinimum,
-		unsigned int absoluteMouseXMaximum,
-		unsigned int absoluteMouseYMinimum,
-		unsigned int absoluteMouseYMaximum
+		unsigned int absolutePointerXMinimum,
+		unsigned int absolutePointerXMaximum,
+		unsigned int absolutePointerYMinimum,
+		unsigned int absolutePointerYMaximum
 	);
 
 	void moveAbsolute(int absoluteX, int absoluteY);

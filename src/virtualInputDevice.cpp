@@ -16,18 +16,24 @@ VirtualInputDevice::~VirtualInputDevice()
 	close(fileDescriptor);
 }
 
+
+void VirtualInputDevice::emit(int fileDescriptor, input_event inputEvent)
+{
+	write(fileDescriptor, &inputEvent, sizeof(inputEvent));
+}
+
 void VirtualInputDevice::emit(int fileDescriptor, int type, int code, int val)
 {
-	input_event ie;
+	input_event inputEvent;
 
-	ie.type = type;
-	ie.code = code;
-	ie.value = val;
+	inputEvent.type = type;
+	inputEvent.code = code;
+	inputEvent.value = val;
 	/* timestamp values below are ignored */
-	ie.time.tv_sec = 0;
-	ie.time.tv_usec = 0;
+	inputEvent.time.tv_sec = 0;
+	inputEvent.time.tv_usec = 0;
 
-	write(fileDescriptor, &ie, sizeof(ie));
+	write(fileDescriptor, &inputEvent, sizeof(inputEvent));
 }
 
 int VirtualInputDevice::getRecommendedMillisecondsSleepBetweenActions()

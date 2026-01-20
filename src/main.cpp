@@ -1,6 +1,5 @@
-#include <chrono>
 #include <iostream>
-#include <thread>
+#include <chrono>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -162,19 +161,26 @@ struct WaylandState
 	bool shouldRedrawGridFrame = true;
 	bool shouldActionAndExit = false;
 
-	int openCVFontThickness = 2;
-	int openCVFontShadowThickness = 4;
-	int openCVFontUserInputThickness = 30;
-	int openCVFontUserInputShadowThickness = 35;
+	unsigned int openCVFontThickness = 2;
+	unsigned int openCVFontShadowThickness = 3;
+	unsigned int openCVFontUserInputThickness = 30;
+	unsigned int openCVFontUserInputShadowThickness = 35;
 	double openCVFontScale = 0.5;
 	double openCVFontUserInputScale = 10;
 	cv::Mat openCVInitialFrame;
 	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
 	cv::Scalar openCVTextScalar{0, 0, 0, 255};
-	int openCVRectangleThickness = 2;
-	int openCVCannyLowerThreshold = 0;
-	int openCVCannyUpperThreshold = 255;
-	int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
+	unsigned int openCVRectangleThickness = 2;
+	/* https://docs.opencv.org/3.4/da/d5c/tutorial_canny_detector.html
+	Hysteresis: The final step. Canny does use two thresholds (upper and lower):
+	If a pixel gradient is higher than the upper threshold, the pixel is accepted as an edge
+	If a pixel gradient value is below the lower threshold, then it is rejected.
+	If the pixel gradient is between the two thresholds, then it will be accepted only if it is connected to a pixel that is above the upper threshold.
+	Canny recommended a upper:lower ratio between 2:1 and 3:1.
+	*/
+	unsigned int openCVCannyLowerThreshold = 10;
+	unsigned int openCVCannyUpperThreshold = 30;
+	unsigned int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
 	bool openCVCannyL2Gradient = false;
 
 	int letterCombinationsWidth = 1;
@@ -579,7 +585,8 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	);
 
 	std::vector<std::vector<cv::Point>> contours;
-	cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 3)));
+	//cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 3)));
+	cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
 	cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
 
 	std::vector<cv::Rect> boundingRects;
@@ -690,7 +697,6 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 		}
 	}
 
-	std::cout << "clickTargets.size() " << clickTargets.size() << std::endl;
 	for(size_t x = 0; x < clickTargets.size(); ++x)
 	{
 		cv::rectangle
@@ -984,11 +990,120 @@ std::unordered_map<std::string, Action> stringToAction =
 	{ "middleDrag", Action::middleDrag }
 };
 
-void keyboardMouse(std::string targetMonitorName, Action action, bool displayGrid, int keyboardFileDescriptor)
+void keyboardMouse(std::string targetMonitorName, Action action, bool displayGrid, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
 {
 	WaylandState waylandState;
 	waylandState.displayGrid = displayGrid;
 	bool dragActionMouseDown = false;
+
+	std::fstream configReader;
+	configReader.open(configFilePath, std::fstream::in);
+	if(configReader.fail())
+	{
+		std::cerr << "failed to read from " << configFilePath << "!" << std::endl;
+		configReader.close();
+	} else
+	{
+		std::string getlinestring;
+		while(std::getline(configReader, getlinestring))
+		{
+			if(getlinestring.find('#') != std::string::npos)
+			{
+				getlinestring = getlinestring.substr(0, getlinestring.find('#'));
+			}
+
+			for(size_t x = 0; x < getlinestring.size(); x++)
+			{
+				if(getlinestring.at(x) == ' ' || getlinestring.at(x) == '\t')
+				{
+					getlinestring.erase(getlinestring.begin() + x);
+					--x;
+				}
+			}
+
+			if(getlinestring.size() == 0)
+			{
+				continue;
+			}
+
+			std::array<std::pair<std::string, unsigned int&>, 7> stringIntegerValuePairs =
+			{
+				std::pair<std::string, unsigned int&>("openCVFontThickness", waylandState.openCVFontThickness),
+				std::pair<std::string, unsigned int&>("openCVFontShadowThickness", waylandState.openCVFontShadowThickness),
+				std::pair<std::string, unsigned int&>("openCVFontUserInputThickness", waylandState.openCVFontUserInputThickness),
+				std::pair<std::string, unsigned int&>("openCVFontUserInputShadowThickness", waylandState.openCVFontUserInputShadowThickness),
+				std::pair<std::string, unsigned int&>("openCVRectangleThickness", waylandState.openCVRectangleThickness),
+				std::pair<std::string, unsigned int&>("openCVCannyLowerThreshold", waylandState.openCVCannyLowerThreshold),
+				std::pair<std::string, unsigned int&>("openCVCannyUpperThreshold", waylandState.openCVCannyUpperThreshold)
+			};
+
+			std::array<std::pair<std::string, double&>, 2> stringDoubleValuePairs =
+			{
+				std::pair<std::string, double&>("openCVFontScale", waylandState.openCVFontScale),
+				std::pair<std::string, double&>("openCVFontUserInputScale", waylandState.openCVFontUserInputScale),
+			};
+
+			bool getlineWasEvaluated = false;
+
+			for(int x = 0; x < stringIntegerValuePairs.size(); ++x)
+			{
+				const std::string& currentString = stringIntegerValuePairs.at(x).first;
+				if(getlinestring.find(currentString) != std::string::npos)
+				{
+					std::string valueAsString = getlinestring.substr(getlinestring.find(currentString) + currentString.size());
+					try
+					{
+						stringIntegerValuePairs.at(x).second = std::stoul(valueAsString);
+						if(stringIntegerValuePairs.at(x).second > 255)
+						{
+							stringIntegerValuePairs.at(x).second = 255;
+						}
+						std::cout << "set \"" << currentString << "\" = " << stringIntegerValuePairs.at(x).second << std::endl;
+					} catch(...)
+					{
+						std::cerr << "error reading string integer value pair! expected unsigned integer but got: ";
+						std::cerr << currentString << " = " << valueAsString << std::endl;
+					}
+					getlineWasEvaluated = true;
+					break;
+				}
+			}
+			if(getlineWasEvaluated)
+			{
+				continue;
+			}
+
+			for(int x = 0; x < stringDoubleValuePairs.size(); ++x)
+			{
+				const std::string& currentString = stringDoubleValuePairs.at(x).first;
+				if(getlinestring.find(currentString) != std::string::npos)
+				{
+					std::string valueAsString = getlinestring.substr(getlinestring.find(currentString) + currentString.size());
+					try
+					{
+						stringDoubleValuePairs.at(x).second = std::stod(valueAsString);
+						if(stringDoubleValuePairs.at(x).second > 255)
+						{
+							stringDoubleValuePairs.at(x).second = 255;
+						}
+						std::cout << "set \"" << currentString << "\" = " << stringDoubleValuePairs.at(x).second << std::endl;
+					} catch(...)
+					{
+						std::cerr << "error reading string double value pair! expected double but got: ";
+						std::cerr << currentString << " = " << valueAsString << std::endl;
+					}
+					getlineWasEvaluated = true;
+					break;
+				}
+			}
+			if(getlineWasEvaluated)
+			{
+				continue;
+			}
+
+			std::cerr << "error unknown variable name \"" << getlinestring << "\"!" << std::endl;
+		}
+	}
 
 	waylandState.display = wl_display_connect(getenv("WAYLAND_DISPLAY"));
 	if(!waylandState.display)
@@ -1354,7 +1469,8 @@ int main(int argc, char** argv)
 
 	const std::filesystem::path keyboardMouseRootDir(getenv("keyboardMouseRootDir"));
 	const std::filesystem::path datFolderFilePath(keyboardMouseRootDir / "dat/");
-	const std::filesystem::path keyboardTargetTextFilePath(keyboardMouseRootDir / "dat/keyboardTarget.txt");
+	const std::filesystem::path keyboardTargetTextFilePath(datFolderFilePath / "keyboardTarget.txt");
+	const std::filesystem::path configFilePath(datFolderFilePath / "config.txt");
 	const std::filesystem::path eventDeviceFolderPath("/dev/input/");
 
 	if(!std::filesystem::exists(datFolderFilePath))
@@ -1504,7 +1620,7 @@ int main(int argc, char** argv)
 						if(previousAltclickToCurrentAltClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor); //opencv
+							keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor, configFilePath); //opencv
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousAltClickTime = currentAltClickTime;
@@ -1518,7 +1634,7 @@ int main(int argc, char** argv)
 						if(previousShiftclickToCurrentShiftClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor); //opencv
+							keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor, configFilePath); //opencv
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousShiftClickTime = currentShiftClickTime;

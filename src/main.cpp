@@ -52,7 +52,7 @@ int create_shm_file()
 	int retries = 100;
 	do
 	{
-	char name[] = "/wl_shm-XXXXXX";
+	char name[] = "/keyboardMouse_shm-XXXXXX";
 		randname(name + sizeof(name) - 7);
 		--retries;
 		int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
@@ -87,16 +87,18 @@ int allocate_shm_file(size_t size)
 
 struct Dimension
 {
+	Dimension() : width(0), height(0) {};
 	Dimension(uint32_t width, uint32_t height) : width(width), height(height) {}
-	uint32_t width = 0;
-	uint32_t height = 0;
+	uint32_t width;
+	uint32_t height;
 };
 
 struct Position
 {
+	Position() : x(0), y(0) {};
 	Position(uint32_t x, uint32_t y) : x(x), y(y) {}
-	uint32_t x = 0;
-	uint32_t y = 0;
+	uint32_t x;
+	uint32_t y;
 };
 
 struct ClickTarget
@@ -114,11 +116,17 @@ struct WaylandState
 	wl_display* display = nullptr;
 	wl_registry* registry = nullptr;
 	wl_compositor* compositor = nullptr;
-	
+
 	std::vector<wl_output*> outputs;
 	std::vector<std::string> outputsNames;
-	std::vector<Dimension> outputsDimensions;
-	int selectedOutputIndex;
+	std::vector<Dimension> outputsDimensionsScaled;
+	std::vector<Dimension> outputsDimensionsNotScaled;
+
+	wl_output* selectedOutput;
+	std::string selectedOutputName;
+	Dimension selectedOutputDimensionScaled;
+	Dimension selectedOutputDimensionNotScaled;
+	double selectedOutputScale;
 
 	zxdg_output_manager_v1* xdgOutputManager = nullptr;
 	std::vector<Position> outputsPositions;
@@ -241,7 +249,7 @@ void screenCopyFrameHandleReady
 void screenCopyFrameHandleFailed(void* data, zwlr_screencopy_frame_v1* frame)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	fprintf(stderr, "failed to copy output %s\n", waylandState->outputsNames[waylandState->selectedOutputIndex].c_str());
+	fprintf(stderr, "failed to copy output %s\n", waylandState->selectedOutputName.c_str());
 	exit(EXIT_FAILURE);
 }
 
@@ -280,7 +288,8 @@ void outputHandleMode
 	int32_t refresh
 )
 {
-	//zxdg_output_v1 handles instead
+	WaylandState* waylandState = static_cast<WaylandState*>(data);
+	waylandState->outputsDimensionsNotScaled.emplace_back(Dimension(width, height));
 }
 
 void outputHandleDone(void* data, wl_output* wl_output)
@@ -320,7 +329,7 @@ void zxdgOutputHandleLogicalPosition(void *data, zxdg_output_v1 *zxdgOutput, int
 void zxdgOutputHandleLogicalSize(void *data, zxdg_output_v1 *zxdgOutput, int32_t width, int32_t height)
 {
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
-	waylandState->outputsDimensions.emplace_back(Dimension(width, height));
+	waylandState->outputsDimensionsScaled.emplace_back(Dimension(width, height));
 }
 
 void zxdgOutputHandleDone(void *data, zxdg_output_v1 *zxdgOutput)
@@ -424,8 +433,8 @@ void resetDrawGridFrameVariables(WaylandState& waylandState)
 	(
 		0,
 		0,
-		waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
-		waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+		waylandState.selectedOutputDimensionScaled.width,
+		waylandState.selectedOutputDimensionScaled.height
 	);
 	waylandState.shouldRedrawGridFrame = true;
 }
@@ -547,7 +556,7 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	(
 		waylandState->screenCopyManager,
 		false, //overlay cursor
-		waylandState->outputs[waylandState->selectedOutputIndex]
+		waylandState->selectedOutput
 	);
 	zwlr_screencopy_frame_v1_add_listener(waylandState->screenCopyFrame, &screenCopyFrameListener, waylandState);
 	while(!waylandState->screenCopyBufferWasHandled)
@@ -595,6 +604,8 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	for(size_t x = 0; x < contours.size(); ++x)
 	{
 		cv::Rect boundingRect = cv::boundingRect(contours[x]);
+		boundingRect.x /= waylandState->selectedOutputScale;
+		boundingRect.y /= waylandState->selectedOutputScale;
 		boundingRects.emplace_back(boundingRect);
 	}
 
@@ -760,7 +771,7 @@ void drawFrame(WaylandState* waylandState)
 		cv::Point
 		(
 			0,
-			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+			waylandState->selectedOutputDimensionScaled.height
 		),
 		cv::FONT_HERSHEY_SIMPLEX,
 		waylandState->openCVFontUserInputScale,
@@ -774,7 +785,7 @@ void drawFrame(WaylandState* waylandState)
 		cv::Point
 		(
 			0,
-			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+			waylandState->selectedOutputDimensionScaled.height
 		),
 		cv::FONT_HERSHEY_SIMPLEX,
 		waylandState->openCVFontUserInputScale,
@@ -792,12 +803,14 @@ void layerSurfaceConfigure
 	uint32_t height
 )
 {
+	std::cout << "configure!" << std::endl; //THIS
+
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	zwlr_layer_surface_v1_ack_configure(layerSurface, serial);
 
-	waylandState->sharedMemoryWidth = width;
-	waylandState->sharedMemoryHeight = height;
-	waylandState->sharedMemoryStride = width * 4;
+	waylandState->sharedMemoryWidth = waylandState->selectedOutputDimensionNotScaled.width;
+	waylandState->sharedMemoryHeight = waylandState->selectedOutputDimensionNotScaled.height;
+	waylandState->sharedMemoryStride = waylandState->selectedOutputDimensionNotScaled.width * 4;
 
 	waylandState->sharedMemoryFrameSize = waylandState->sharedMemoryHeight * waylandState->sharedMemoryStride;
 	waylandState->sharedMemoryPoolSize = waylandState->sharedMemoryFrameSize * waylandState->sharedMemoryNBuffers;
@@ -866,8 +879,8 @@ void layerSurfaceConfigure
 		(
 			0,
 			0,
-			waylandState->outputsDimensions[waylandState->selectedOutputIndex].width,
-			waylandState->outputsDimensions[waylandState->selectedOutputIndex].height
+			waylandState->selectedOutputDimensionScaled.width,
+			waylandState->selectedOutputDimensionScaled.height
 		);
 		drawGridFrame(waylandState);
 	} else
@@ -898,6 +911,8 @@ const wl_callback_listener layerSurfaceCallbackListener =
 
 void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
 {
+	std::cout << "callback! " << std::endl; //THIS
+
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	wl_callback_destroy(callback);
 
@@ -1135,34 +1150,39 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	wl_display_roundtrip(waylandState.display); //process globals and listeners, send zxdg_output_v1_add_listener
 	wl_display_roundtrip(waylandState.display); //process dones
 
-	waylandState.selectedOutputIndex = -1;
+	bool foundNamedMonitor = false;
 	for(size_t x = 0; x < waylandState.outputsNames.size(); ++x)
 	{
 		if(waylandState.outputsNames[x] == targetMonitorName)
 		{
-			waylandState.selectedOutputIndex = x;
+			foundNamedMonitor = true;
 			waylandState.mouseXOrigin = waylandState.outputsPositions[x].x;
 			waylandState.mouseYOrigin = waylandState.outputsPositions[x].y;
+
+			waylandState.selectedOutput = waylandState.outputs[x];
+			waylandState.selectedOutputName = waylandState.outputsNames[x];
+			waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled[x];
+			waylandState.selectedOutputDimensionNotScaled = waylandState.outputsDimensionsNotScaled[x];
+			waylandState.selectedOutputScale = static_cast<double>(waylandState.selectedOutputDimensionNotScaled.width) / waylandState.selectedOutputDimensionScaled.width;
 			break;
 		}
 	}
-	if(waylandState.selectedOutputIndex == -1)
+	if(!foundNamedMonitor)
 	{
 		std::cerr << "failed to find monitor named \"" << targetMonitorName << "\"!" << std::endl;
-		waylandState.selectedOutputIndex = 0;
-		waylandState.mouseXOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].x;
-		waylandState.mouseYOrigin = waylandState.outputsPositions[waylandState.selectedOutputIndex].y;
+		waylandState.mouseXOrigin = waylandState.outputsPositions[0].x;
+		waylandState.mouseYOrigin = waylandState.outputsPositions[0].y;
 	}
 
-	for(size_t x = 0; x < waylandState.outputsDimensions.size(); x++)
+	for(size_t x = 0; x < waylandState.outputsDimensionsScaled.size(); x++)
 	{
-		if(waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width > waylandState.mouseXExtent)
+		if(waylandState.outputsPositions[x].x + waylandState.outputsDimensionsScaled[x].width > waylandState.mouseXExtent)
 		{
-			 waylandState.mouseXExtent = waylandState.outputsPositions[x].x + waylandState.outputsDimensions[x].width;
+			 waylandState.mouseXExtent = waylandState.outputsPositions[x].x + waylandState.outputsDimensionsScaled[x].width;
 		}
-		if(waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height > waylandState.mouseYExtent)
+		if(waylandState.outputsPositions[x].y + waylandState.outputsDimensionsScaled[x].height > waylandState.mouseYExtent)
 		{
-			 waylandState.mouseYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height;
+			 waylandState.mouseYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensionsScaled[x].height;
 		}
 	}
 	AbsolutePointer absolutePointer(waylandState.mouseXOrigin, waylandState.mouseXExtent, waylandState.mouseYOrigin, waylandState.mouseYExtent);
@@ -1173,7 +1193,7 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	(
 		waylandState.layerShell,
 		waylandState.surface,
-		waylandState.outputs[waylandState.selectedOutputIndex],
+		waylandState.selectedOutput,
 		ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
 		"keyboardMouseOverlay"
 	);
@@ -1183,8 +1203,8 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	zwlr_layer_surface_v1_set_size
 	(
 		waylandState.layerSurface,
-		waylandState.outputsDimensions[waylandState.selectedOutputIndex].width,
-		waylandState.outputsDimensions[waylandState.selectedOutputIndex].height
+		waylandState.selectedOutputDimensionNotScaled.width, //as of Wednesday, January 21, 2026, 14:55:19, yea idk either bru. Monitor scaling killing me rn
+		waylandState.selectedOutputDimensionNotScaled.height
 	);
 	zwlr_layer_surface_v1_set_anchor(waylandState.layerSurface, ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
 	zwlr_layer_surface_v1_set_margin

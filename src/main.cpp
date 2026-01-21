@@ -1,5 +1,6 @@
 #include <iostream>
 #include <chrono>
+#include <thread>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -160,6 +161,7 @@ struct WaylandState
 	uint32_t mouseYOrigin = 0;
 	bool shouldRedrawGridFrame = true;
 	bool shouldActionAndExit = false;
+	unsigned int mouseRelativeJitterSleepMilliseconds = 5;
 
 	unsigned int openCVFontThickness = 2;
 	unsigned int openCVFontShadowThickness = 3;
@@ -990,6 +992,7 @@ std::unordered_map<std::string, Action> stringToAction =
 	{ "middleDrag", Action::middleDrag }
 };
 
+static Mouse mouse; //chromium doesn't register mouse on fly fast enough or something of the sort, as of Wednesday, January 21, 2026, 11:33:52
 void keyboardMouse(std::string targetMonitorName, Action action, bool displayGrid, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
 {
 	WaylandState waylandState;
@@ -1026,7 +1029,7 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 				continue;
 			}
 
-			std::array<std::pair<std::string, unsigned int&>, 7> stringIntegerValuePairs =
+			std::array<std::pair<std::string, unsigned int&>, 8> stringIntegerValuePairs =
 			{
 				std::pair<std::string, unsigned int&>("openCVFontThickness", waylandState.openCVFontThickness),
 				std::pair<std::string, unsigned int&>("openCVFontShadowThickness", waylandState.openCVFontShadowThickness),
@@ -1034,7 +1037,8 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 				std::pair<std::string, unsigned int&>("openCVFontUserInputShadowThickness", waylandState.openCVFontUserInputShadowThickness),
 				std::pair<std::string, unsigned int&>("openCVRectangleThickness", waylandState.openCVRectangleThickness),
 				std::pair<std::string, unsigned int&>("openCVCannyLowerThreshold", waylandState.openCVCannyLowerThreshold),
-				std::pair<std::string, unsigned int&>("openCVCannyUpperThreshold", waylandState.openCVCannyUpperThreshold)
+				std::pair<std::string, unsigned int&>("openCVCannyUpperThreshold", waylandState.openCVCannyUpperThreshold),
+				std::pair<std::string, unsigned int&>("mouseRelativeJitterSleepMilliseconds", waylandState.mouseRelativeJitterSleepMilliseconds)
 			};
 
 			std::array<std::pair<std::string, double&>, 2> stringDoubleValuePairs =
@@ -1161,7 +1165,6 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 			 waylandState.mouseYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensions[x].height;
 		}
 	}
-	Mouse mouse;
 	AbsolutePointer absolutePointer(waylandState.mouseXOrigin, waylandState.mouseXExtent, waylandState.mouseYOrigin, waylandState.mouseYExtent);
 
 	waylandState.layerSurfaceShouldClose = false;
@@ -1284,6 +1287,21 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 							int absoluteX = waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x;
 							int absoluteY = waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y;
 							absolutePointer.moveAbsolute(absoluteX, absoluteY);
+
+							std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+							if(absoluteX >= waylandState.mouseXExtent)
+							{
+								mouse.moveRelative(-1, 0);
+								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+								mouse.moveRelative(1, 0);
+								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+							} else
+							{
+								mouse.moveRelative(1, 0);
+								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+								mouse.moveRelative(-1, 0);
+								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+							}
 
 							if
 							(

@@ -803,8 +803,6 @@ void layerSurfaceConfigure
 	uint32_t height
 )
 {
-	std::cout << "configure!" << std::endl; //THIS
-
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	zwlr_layer_surface_v1_ack_configure(layerSurface, serial);
 
@@ -911,8 +909,6 @@ const wl_callback_listener layerSurfaceCallbackListener =
 
 void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //body here also needed
 {
-	std::cout << "callback! " << std::endl; //THIS
-
 	WaylandState* waylandState = static_cast<WaylandState*>(data);
 	wl_callback_destroy(callback);
 
@@ -963,6 +959,21 @@ void waylandRegistryHandleGlobal(void* data, wl_registry* registry, uint32_t nam
 void waylandRegistryHandleGlobalRemove(void* data, wl_registry* registry, uint32_t name)
 {
 	//"intentionally left blank"
+}
+
+void setXDG_RUNTIME_DIR()
+{
+	/* as of Thursday, January 22, 2026, 12:13:49
+	assuming the following:
+		1. XDG_RUNTIME_DIR is set in /run/user/$UID by default
+		2. User is in "single user mode," thus only
+			the first std::filesystem::directory_entry
+			from XDG_RUNTIME_DIR is taken, and is assumed
+			to be the "target user"
+	*/
+	std::filesystem::path XDG_RUNTIME_DIR("/run/user/");
+	std::filesystem::directory_iterator it(XDG_RUNTIME_DIR);
+	setenv("XDG_RUNTIME_DIR", (*it).path().c_str(), true);
 }
 
 std::unordered_map<uint32_t, char> inputEventCodeToAscii =
@@ -1124,13 +1135,27 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 		}
 	}
 
-	waylandState.display = wl_display_connect(getenv("WAYLAND_DISPLAY"));
+	setXDG_RUNTIME_DIR();
+	const std::array<std::string, 3> possibleWaylandDisplays =
+	{
+		"wayland-0",
+		"wayland-1",
+		"wayland-2"
+	};
+	for(int x = 0; x < possibleWaylandDisplays.size(); ++x)
+	{
+		waylandState.display = wl_display_connect(possibleWaylandDisplays.at(x).c_str());
+		if(waylandState.display)
+		{
+			std::cout << "connected to " << possibleWaylandDisplays.at(x) << std::endl;
+			break;
+		}
+	}
 	if(!waylandState.display)
 	{
 		std::cerr << "failed to connect to waylandDisplay" << std::endl;
 		exit(EXIT_FAILURE);
 	}
-	std::cout << "connected to waylandDisplay" << std::endl;
 
 	waylandState.registry = wl_display_get_registry(waylandState.display);
 	const wl_registry_listener waylandRegistryListener
@@ -1158,7 +1183,6 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 			foundNamedMonitor = true;
 			waylandState.mouseXOrigin = waylandState.outputsPositions[x].x;
 			waylandState.mouseYOrigin = waylandState.outputsPositions[x].y;
-
 			waylandState.selectedOutput = waylandState.outputs[x];
 			waylandState.selectedOutputName = waylandState.outputsNames[x];
 			waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled[x];
@@ -1172,6 +1196,11 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 		std::cerr << "failed to find monitor named \"" << targetMonitorName << "\"!" << std::endl;
 		waylandState.mouseXOrigin = waylandState.outputsPositions[0].x;
 		waylandState.mouseYOrigin = waylandState.outputsPositions[0].y;
+		waylandState.selectedOutput = waylandState.outputs[0];
+		waylandState.selectedOutputName = waylandState.outputsNames[0];
+		waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled[0];
+		waylandState.selectedOutputDimensionNotScaled = waylandState.outputsDimensionsNotScaled[0];
+		waylandState.selectedOutputScale = static_cast<double>(waylandState.selectedOutputDimensionNotScaled.width) / waylandState.selectedOutputDimensionScaled.width;
 	}
 
 	for(size_t x = 0; x < waylandState.outputsDimensionsScaled.size(); x++)
@@ -1493,7 +1522,7 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	{
 		//must be called last!
 		wl_display_disconnect(waylandState.display);
-		std::cout << "disconnected from waylandDisplay" << std::endl;
+		std::cout << "disconnected from wayland display" << std::endl;
 	}
 }
 

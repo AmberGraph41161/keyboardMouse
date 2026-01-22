@@ -192,6 +192,8 @@ struct WaylandState
 	unsigned int openCVCannyUpperThreshold = 30;
 	unsigned int openCVCannyApetureSize = 3; //only allowed to be 3, 5, or 7
 	bool openCVCannyL2Gradient = false;
+	unsigned int openCVDilateWidth = 5;
+	unsigned int openCVDilateHeight = 5;
 
 	int letterCombinationsWidth = 1;
 	std::string userKeyboardInput = "";
@@ -596,8 +598,7 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	);
 
 	std::vector<std::vector<cv::Point>> contours;
-	//cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 3)));
-	cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+	cv::dilate(grayMat, grayMat, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(waylandState->openCVDilateWidth, waylandState->openCVDilateHeight)));
 	cv::findContours(grayMat, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
 
 	std::vector<cv::Rect> boundingRects;
@@ -1055,7 +1056,7 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 				continue;
 			}
 
-			std::array<std::pair<std::string, unsigned int&>, 8> stringIntegerValuePairs =
+			std::array<std::pair<std::string, unsigned int&>, 10> stringIntegerValuePairs =
 			{
 				std::pair<std::string, unsigned int&>("openCVFontThickness", waylandState.openCVFontThickness),
 				std::pair<std::string, unsigned int&>("openCVFontShadowThickness", waylandState.openCVFontShadowThickness),
@@ -1064,7 +1065,9 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 				std::pair<std::string, unsigned int&>("openCVRectangleThickness", waylandState.openCVRectangleThickness),
 				std::pair<std::string, unsigned int&>("openCVCannyLowerThreshold", waylandState.openCVCannyLowerThreshold),
 				std::pair<std::string, unsigned int&>("openCVCannyUpperThreshold", waylandState.openCVCannyUpperThreshold),
-				std::pair<std::string, unsigned int&>("mouseRelativeJitterSleepMilliseconds", waylandState.mouseRelativeJitterSleepMilliseconds)
+				std::pair<std::string, unsigned int&>("mouseRelativeJitterSleepMilliseconds", waylandState.mouseRelativeJitterSleepMilliseconds),
+				std::pair<std::string, unsigned int&>("openCVDilateWidth", waylandState.openCVDilateWidth),
+				std::pair<std::string, unsigned int&>("openCVDilateHeight", waylandState.openCVDilateHeight)
 			};
 
 			std::array<std::pair<std::string, double&>, 2> stringDoubleValuePairs =

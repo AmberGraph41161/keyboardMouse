@@ -110,10 +110,23 @@ struct ClickTarget
 };
 
 enum class DisplayMode { grid, buttonDetection, mouse };
+enum class MouseAction { move, leftClick, rightClick, middleClick, leftDrag, rightDrag, middleDrag };
+std::unordered_map<std::string, MouseAction> stringToAction =
+{
+	{ "move", MouseAction::move },
+	{ "leftClick", MouseAction::leftClick },
+	{ "rightClick", MouseAction::rightClick },
+	{ "middleClick", MouseAction::middleClick },
+	{ "leftDrag", MouseAction::leftDrag },
+	{ "rightDrag", MouseAction::rightDrag },
+	{ "middleDrag", MouseAction::middleDrag }
+};
 
 struct WaylandState
 {
 	DisplayMode displayMode = DisplayMode::grid;
+	MouseAction mouseAction = MouseAction::leftClick;
+	bool mouseActionCommitted = false;
 
 	wl_display* display = nullptr;
 	wl_registry* registry = nullptr;
@@ -176,8 +189,11 @@ struct WaylandState
 	unsigned int openCVFontShadowThickness = 3;
 	unsigned int openCVFontUserInputThickness = 30;
 	unsigned int openCVFontUserInputShadowThickness = 35;
+	unsigned int openCVFontDrawTextThickness = 10;
+	unsigned int openCVFontDrawTextShadowThickness = 15;
 	double openCVFontScale = 0.5;
 	double openCVFontUserInputScale = 10;
+	double openCVFontDrawTextScale = 3;
 	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
 	cv::Scalar openCVTextScalar{0, 0, 0, 255};
 	unsigned int openCVRectangleThickness = 2;
@@ -425,6 +441,47 @@ void nextScalarColor(cv::Scalar& scalar, int incrementBy = 1)
 	}
 }
 
+void drawText(WaylandState* waylandState, std::string text)
+{
+	cv::Mat drawMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
+		waylandState->sharedMemoryStride
+	);
+
+	cv::putText
+	(
+		drawMat,
+		text,
+		cv::Point
+		(
+			0,
+			waylandState->selectedOutputDimensionScaled.height / 2
+		),
+		cv::FONT_HERSHEY_SIMPLEX,
+		waylandState->openCVFontDrawTextScale,
+		waylandState->openCVRectangleScalar,
+		waylandState->openCVFontDrawTextShadowThickness
+	);
+	cv::putText
+	(
+		drawMat,
+		text,
+		cv::Point
+		(
+			0,
+			waylandState->selectedOutputDimensionScaled.height / 2
+		),
+		cv::FONT_HERSHEY_SIMPLEX,
+		waylandState->openCVFontDrawTextScale,
+		waylandState->openCVTextScalar,
+		waylandState->openCVFontDrawTextThickness
+	);
+}
+
 void resetDrawFrameVariables(WaylandState& waylandState, bool resetGridDrawAreaResizeCount = true)
 {
 	std::memset(waylandState.sharedMemoryPoolData + waylandState.sharedMemoryFrameSize, 0, waylandState.sharedMemoryFrameSize);
@@ -560,7 +617,6 @@ void drawGridFrame(WaylandState* waylandState)
 		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
 		waylandState->sharedMemoryStride
 	);
-
 
 	std::vector<ClickTarget> clickTargets;
 	for
@@ -1064,22 +1120,14 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 	{ KEY_X, 'X' },
 	{ KEY_Y, 'Y' },
 	{ KEY_Z, 'Z' },
-};
-
-enum class MouseAction { move, leftClick, rightClick, middleClick, leftDrag, rightDrag, middleDrag };
-std::unordered_map<std::string, MouseAction> stringToAction =
-{
-	{ "move", MouseAction::move },
-	{ "leftClick", MouseAction::leftClick },
-	{ "rightClick", MouseAction::rightClick },
-	{ "middleClick", MouseAction::middleClick },
-	{ "leftDrag", MouseAction::leftDrag },
-	{ "rightDrag", MouseAction::rightDrag },
-	{ "middleDrag", MouseAction::middleDrag }
+	{ KEY_GRAVE, '`' },
+	{ KEY_1, '1' },
+	{ KEY_2, '2' },
+	{ KEY_3, '3' },
 };
 
 static Mouse mouse; //chromium doesn't register mouse on fly fast enough or something of the sort, as of Wednesday, January 21, 2026, 11:33:52
-void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMode displayMode, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
+void keyboardMouse(std::string targetMonitorName, DisplayMode displayMode, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
 {
 	WaylandState waylandState;
 	waylandState.displayMode = displayMode;
@@ -1114,12 +1162,14 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 				continue;
 			}
 
-			std::array<std::pair<std::string, unsigned int&>, 10> stringIntegerValuePairs =
+			std::array<std::pair<std::string, unsigned int&>, 12> stringIntegerValuePairs =
 			{
 				std::pair<std::string, unsigned int&>("openCVFontThickness", waylandState.openCVFontThickness),
 				std::pair<std::string, unsigned int&>("openCVFontShadowThickness", waylandState.openCVFontShadowThickness),
 				std::pair<std::string, unsigned int&>("openCVFontUserInputThickness", waylandState.openCVFontUserInputThickness),
 				std::pair<std::string, unsigned int&>("openCVFontUserInputShadowThickness", waylandState.openCVFontUserInputShadowThickness),
+				std::pair<std::string, unsigned int&>("openCVFontDrawTextThickness", waylandState.openCVFontDrawTextThickness),
+				std::pair<std::string, unsigned int&>("openCVFontDrawTextShadowThickness", waylandState.openCVFontDrawTextShadowThickness),
 				std::pair<std::string, unsigned int&>("openCVRectangleThickness", waylandState.openCVRectangleThickness),
 				std::pair<std::string, unsigned int&>("openCVCannyLowerThreshold", waylandState.openCVCannyLowerThreshold),
 				std::pair<std::string, unsigned int&>("openCVCannyUpperThreshold", waylandState.openCVCannyUpperThreshold),
@@ -1128,10 +1178,11 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 				std::pair<std::string, unsigned int&>("openCVDilateHeight", waylandState.openCVDilateHeight)
 			};
 
-			std::array<std::pair<std::string, double&>, 2> stringDoubleValuePairs =
+			std::array<std::pair<std::string, double&>, 3> stringDoubleValuePairs =
 			{
 				std::pair<std::string, double&>("openCVFontScale", waylandState.openCVFontScale),
 				std::pair<std::string, double&>("openCVFontUserInputScale", waylandState.openCVFontUserInputScale),
+				std::pair<std::string, double&>("openCVFontDrawTextScale", waylandState.openCVFontDrawTextScale)
 			};
 
 			bool getlineWasEvaluated = false;
@@ -1315,6 +1366,7 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 	wl_surface_commit(waylandState.surface);
 	wl_display_flush(waylandState.display);
 
+	bool shiftKeyIsHeldDown = false;
 	bool dragActionMouseDown = false;
 	input_event inputEvent;
 	while
@@ -1363,6 +1415,13 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 						break;
 					}
 
+					case KEY_RIGHTSHIFT:
+					case KEY_LEFTSHIFT:
+					{
+						shiftKeyIsHeldDown = true;
+						break;
+					}
+
 					default:
 					{
 						char inputEventCodeAsAscii = '\0';
@@ -1374,7 +1433,68 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 							inputEventCodeAsAscii = '?';
 						}
 
+						if(inputEventCodeAsAscii == '`' || (inputEventCodeAsAscii >= '0' && inputEventCodeAsAscii <= '9'))
+						{
+							if(waylandState.mouseActionCommitted)
+							{
+								drawText(&waylandState, "mouse action already committed");
+							} else
+							{
+								switch(inputEventCodeAsAscii)
+								{
+									case '`':
+									{
+										drawText(&waylandState, "mouseMove");
+										waylandState.mouseAction = MouseAction::move;
+										break;
+									}
+									case '1':
+									{
+										if(shiftKeyIsHeldDown)
+										{
+											drawText(&waylandState, "leftDrag");
+											waylandState.mouseAction = MouseAction::leftDrag;
+										} else
+										{
+											drawText(&waylandState, "leftClick");
+											waylandState.mouseAction = MouseAction::leftClick;
+										}
+										break;
+									}
+
+									case '2':
+									{
+										if(shiftKeyIsHeldDown)
+										{
+											drawText(&waylandState, "middleDrag");
+											waylandState.mouseAction = MouseAction::middleDrag;
+										} else
+										{
+											drawText(&waylandState, "middleClick");
+											waylandState.mouseAction = MouseAction::middleClick;
+										}
+										break;
+									}
+
+									case '3':
+									{
+										if(shiftKeyIsHeldDown)
+										{
+											drawText(&waylandState, "rightDrag");
+											waylandState.mouseAction = MouseAction::rightDrag;
+										} else
+										{
+											drawText(&waylandState, "rightClick");
+											waylandState.mouseAction = MouseAction::rightClick;
+										}
+										break;
+									}
+								}
+								break;
+							}
+						}
 						waylandState.userKeyboardInput += inputEventCodeAsAscii;
+
 						if
 						(
 							waylandState.userKeyboardInput.size() > waylandState.letterCombinationsWidth ||
@@ -1395,6 +1515,7 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 						}
 						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
 						{
+							waylandState.mouseActionCommitted = true;
 							if
 							(
 								waylandState.displayMode == DisplayMode::buttonDetection ||
@@ -1424,7 +1545,7 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
 								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
 								wl_surface_commit(waylandState.surface);
-								switch(action)
+								switch(waylandState.mouseAction)
 								{
 									case MouseAction::move:
 									{
@@ -1522,6 +1643,17 @@ void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMod
 								drawNthInitialGridFrame(&waylandState, increment);
 							}
 						}
+						break;
+					}
+				}
+			} else if(inputEvent.value == 0) //released
+			{
+				switch(inputEvent.code)
+				{
+					case KEY_RIGHTSHIFT:
+					case KEY_LEFTSHIFT:
+					{
+						shiftKeyIsHeldDown = false;
 						break;
 					}
 				}
@@ -1767,7 +1899,7 @@ int main(int argc, char** argv)
 						if(previousAltclickToCurrentAltClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, MouseAction::leftDrag, DisplayMode::grid, keyboardFileDescriptor, configFilePath); //opencv
+							keyboardMouse(targetMonitorName, DisplayMode::grid, keyboardFileDescriptor, configFilePath);
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousAltClickTime = currentAltClickTime;
@@ -1781,7 +1913,7 @@ int main(int argc, char** argv)
 						if(previousShiftclickToCurrentShiftClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, MouseAction::leftDrag, DisplayMode::buttonDetection, keyboardFileDescriptor, configFilePath); //opencv
+							keyboardMouse(targetMonitorName, DisplayMode::buttonDetection, keyboardFileDescriptor, configFilePath);
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousShiftClickTime = currentShiftClickTime;

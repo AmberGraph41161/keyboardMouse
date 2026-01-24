@@ -109,9 +109,11 @@ struct ClickTarget
 	std::string letterCombination;
 };
 
+enum class DisplayMode { grid, buttonDetection, mouse };
+
 struct WaylandState
 {
-	bool displayGrid = true;
+	DisplayMode displayMode = DisplayMode::grid;
 
 	wl_display* display = nullptr;
 	wl_registry* registry = nullptr;
@@ -167,7 +169,6 @@ struct WaylandState
 	uint32_t mouseYExtent = 0;
 	uint32_t mouseXOrigin = 0;
 	uint32_t mouseYOrigin = 0;
-	bool shouldRedrawGridFrame = true;
 	bool shouldActionAndExit = false;
 	unsigned int mouseRelativeJitterSleepMilliseconds = 5;
 
@@ -177,7 +178,6 @@ struct WaylandState
 	unsigned int openCVFontUserInputShadowThickness = 35;
 	double openCVFontScale = 0.5;
 	double openCVFontUserInputScale = 10;
-	cv::Mat openCVInitialFrame;
 	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
 	cv::Scalar openCVTextScalar{0, 0, 0, 255};
 	unsigned int openCVRectangleThickness = 2;
@@ -425,35 +425,34 @@ void nextScalarColor(cv::Scalar& scalar, int incrementBy = 1)
 	}
 }
 
-void resetDrawGridFrameVariables(WaylandState& waylandState)
+void resetDrawFrameVariables(WaylandState& waylandState, bool resetGridDrawAreaResizeCount = true)
 {
-	waylandState.drawAreaResizeCount = 0;
+	std::memset(waylandState.sharedMemoryPoolData + waylandState.sharedMemoryFrameSize, 0, waylandState.sharedMemoryFrameSize);
 	waylandState.userKeyboardInput.clear();
 	waylandState.layeredLetterCombinationsToClickTargets.clear();
+	waylandState.letterCombinationsWidth = 1;
 	waylandState.letterCombinationsToClickTargets.clear();
-	waylandState.drawArea = cv::Rect
-	(
-		0,
-		0,
-		waylandState.selectedOutputDimensionScaled.width,
-		waylandState.selectedOutputDimensionScaled.height
-	);
-	waylandState.shouldRedrawGridFrame = true;
+	if(resetGridDrawAreaResizeCount)
+	{
+		waylandState.drawAreaResizeCount = 0;
+		waylandState.drawArea = cv::Rect
+		(
+			0,
+			0,
+			waylandState.selectedOutputDimensionScaled.width,
+			waylandState.selectedOutputDimensionScaled.height
+		);
+	}
 }
 
-void drawGridFrame(WaylandState* waylandState)
+void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 {
-	if(waylandState->shouldRedrawGridFrame)
+	if(increment && waylandState->drawAreaResizeCount + 1 < waylandState->drawResizeDivisorFromNthDraw.size())
 	{
-		waylandState->shouldRedrawGridFrame = false;
-		waylandState->letterCombinationsWidth = 1;
-		waylandState->letterCombinationsToClickTargets.clear();
-		std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
-	} else
-	{
-		return;
+		++waylandState->drawAreaResizeCount;
 	}
 
+	std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
 	cv::Mat drawMat
 	(
 		waylandState->sharedMemoryHeight,
@@ -465,7 +464,7 @@ void drawGridFrame(WaylandState* waylandState)
 
 	uint32_t gridBoxHeight = waylandState->drawArea.height / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
 	uint32_t gridBoxWidth = waylandState->drawArea.width / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
-	++waylandState->drawAreaResizeCount;
+
 	std::vector<cv::Rect> boundingRects;
 	for
 	(
@@ -486,11 +485,13 @@ void drawGridFrame(WaylandState* waylandState)
 	}
 
 	int nLetterCombinations = 26;
+	waylandState->letterCombinationsWidth = 1;
 	while(nLetterCombinations < boundingRects.size())
 	{
 		nLetterCombinations *= nLetterCombinations;
 		++waylandState->letterCombinationsWidth;
 	}
+
 	std::string letterCombination(waylandState->letterCombinationsWidth, 'A');
 
 	for(size_t x = 0; x < boundingRects.size(); ++x)
@@ -546,8 +547,70 @@ void drawGridFrame(WaylandState* waylandState)
 		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar, 50);
 	}
+}
 
-	drawMat.copyTo(waylandState->openCVInitialFrame);
+void drawGridFrame(WaylandState* waylandState)
+{
+	std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
+	cv::Mat drawMat
+	(
+		waylandState->sharedMemoryHeight,
+		waylandState->sharedMemoryWidth,
+		CV_8UC4,
+		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
+		waylandState->sharedMemoryStride
+	);
+
+
+	std::vector<ClickTarget> clickTargets;
+	for
+	(
+		std::unordered_map<std::string, ClickTarget>::iterator it = waylandState->letterCombinationsToClickTargets.begin();
+		it != waylandState->letterCombinationsToClickTargets.end();
+		++it
+	)
+	{
+		clickTargets.emplace_back((*it).second);
+	}
+
+	for(size_t x = 0; x < clickTargets.size(); ++x)
+	{
+		cv::rectangle
+		(
+			drawMat,
+			clickTargets[x].rectangle.tl(),
+			clickTargets[x].rectangle.br(),
+			clickTargets[x].scalar,
+			waylandState->openCVRectangleThickness
+		);
+
+		cv::Point boundingRectBottomLeft
+		(
+			clickTargets[x].rectangle.tl().x + waylandState->openCVRectangleThickness,
+			clickTargets[x].rectangle.br().y - waylandState->openCVRectangleThickness
+		);
+
+		cv::putText
+		(
+			drawMat,
+			clickTargets[x].letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			clickTargets[x].scalar,
+			waylandState->openCVFontShadowThickness
+		);
+		cv::putText
+		(
+			drawMat,
+			clickTargets[x].letterCombination,
+			boundingRectBottomLeft,
+			cv::FONT_HERSHEY_SIMPLEX,
+			waylandState->openCVFontScale,
+			waylandState->openCVTextScalar,
+			waylandState->openCVFontThickness
+		);
+	}
 }
 
 void drawInitialButtonDetectionFrame(WaylandState* waylandState)
@@ -678,8 +741,6 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar);
 	}
-
-	drawMat.copyTo(waylandState->openCVInitialFrame);
 }
 
 void drawButtonDetectionFrame(WaylandState* waylandState)
@@ -749,8 +810,6 @@ void drawButtonDetectionFrame(WaylandState* waylandState)
 			waylandState->openCVFontThickness
 		);
 	}
-
-	drawMat.copyTo(waylandState->openCVInitialFrame);
 }
 
 void drawFrame(WaylandState* waylandState)
@@ -763,7 +822,6 @@ void drawFrame(WaylandState* waylandState)
 		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
 		waylandState->sharedMemoryStride
 	);
-	waylandState->openCVInitialFrame.copyTo(drawMat);
 
 	cv::putText
 	(
@@ -872,7 +930,7 @@ void layerSurfaceConfigure
 	);
 	wl_buffer_add_listener(waylandState->buffer, &waylandBufferListener, waylandState);
 
-	if(waylandState->displayGrid)
+	if(waylandState->displayMode == DisplayMode::grid)
 	{
 		waylandState->drawArea = cv::Rect
 		(
@@ -881,8 +939,9 @@ void layerSurfaceConfigure
 			waylandState->selectedOutputDimensionScaled.width,
 			waylandState->selectedOutputDimensionScaled.height
 		);
-		drawGridFrame(waylandState);
-	} else
+		bool increment = false;
+		drawNthInitialGridFrame(waylandState, increment);
+	} else if(waylandState->displayMode == DisplayMode::buttonDetection)
 	{
 		drawInitialButtonDetectionFrame(waylandState);
 	}
@@ -916,10 +975,10 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
-	if(waylandState->displayGrid)
+	if(waylandState->displayMode == DisplayMode::grid)
 	{
 		drawGridFrame(waylandState);
-	} else
+	} else if(waylandState->displayMode == DisplayMode::buttonDetection)
 	{
 		drawButtonDetectionFrame(waylandState);
 	}
@@ -1007,24 +1066,23 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 	{ KEY_Z, 'Z' },
 };
 
-enum class Action { move, leftClick, rightClick, middleClick, leftDrag, rightDrag, middleDrag };
-std::unordered_map<std::string, Action> stringToAction =
+enum class MouseAction { move, leftClick, rightClick, middleClick, leftDrag, rightDrag, middleDrag };
+std::unordered_map<std::string, MouseAction> stringToAction =
 {
-	{ "move", Action::move },
-	{ "leftClick", Action::leftClick },
-	{ "rightClick", Action::rightClick },
-	{ "middleClick", Action::middleClick },
-	{ "leftDrag", Action::leftDrag },
-	{ "rightDrag", Action::rightDrag },
-	{ "middleDrag", Action::middleDrag }
+	{ "move", MouseAction::move },
+	{ "leftClick", MouseAction::leftClick },
+	{ "rightClick", MouseAction::rightClick },
+	{ "middleClick", MouseAction::middleClick },
+	{ "leftDrag", MouseAction::leftDrag },
+	{ "rightDrag", MouseAction::rightDrag },
+	{ "middleDrag", MouseAction::middleDrag }
 };
 
 static Mouse mouse; //chromium doesn't register mouse on fly fast enough or something of the sort, as of Wednesday, January 21, 2026, 11:33:52
-void keyboardMouse(std::string targetMonitorName, Action action, bool displayGrid, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
+void keyboardMouse(std::string targetMonitorName, MouseAction action, DisplayMode displayMode, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
 {
 	WaylandState waylandState;
-	waylandState.displayGrid = displayGrid;
-	bool dragActionMouseDown = false;
+	waylandState.displayMode = displayMode;
 
 	std::fstream configReader;
 	configReader.open(configFilePath, std::fstream::in);
@@ -1257,6 +1315,7 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 	wl_surface_commit(waylandState.surface);
 	wl_display_flush(waylandState.display);
 
+	bool dragActionMouseDown = false;
 	input_event inputEvent;
 	while
 	(
@@ -1336,61 +1395,61 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 						}
 						if(waylandState.letterCombinationsToClickTargets.count(waylandState.userKeyboardInput))
 						{
-							int absoluteX = waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x;
-							int absoluteY = waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y;
-							absolutePointer.moveAbsolute(absoluteX, absoluteY);
-
-							std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
-							if(absoluteX >= waylandState.mouseXExtent)
-							{
-								mouse.moveRelative(-1, 0);
-								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
-								mouse.moveRelative(1, 0);
-								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
-							} else
-							{
-								mouse.moveRelative(1, 0);
-								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
-								mouse.moveRelative(-1, 0);
-								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
-							}
-
 							if
 							(
-								!waylandState.displayGrid ||
-								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size()
+								waylandState.displayMode == DisplayMode::buttonDetection ||
+								waylandState.drawAreaResizeCount >= waylandState.drawResizeDivisorFromNthDraw.size() - 1
 							)
 							{
+								int absoluteX = waylandState.mouseXOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.x;
+								int absoluteY = waylandState.mouseYOrigin + waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).clickPoint.y;
+								absolutePointer.moveAbsolute(absoluteX, absoluteY);
+
+								std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+								if(absoluteX >= waylandState.mouseXExtent)
+								{
+									mouse.moveRelative(-1, 0);
+									std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+									mouse.moveRelative(1, 0);
+									std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+								} else
+								{
+									mouse.moveRelative(1, 0);
+									std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+									mouse.moveRelative(-1, 0);
+									std::this_thread::sleep_for(std::chrono::milliseconds(waylandState.mouseRelativeJitterSleepMilliseconds));
+								}
+
 								drawFrame(&waylandState);
 								wl_surface_attach(waylandState.surface, waylandState.buffer, 0, 0);
 								wl_surface_damage(waylandState.surface, 0, 0, waylandState.sharedMemoryWidth, waylandState.sharedMemoryHeight);
 								wl_surface_commit(waylandState.surface);
 								switch(action)
 								{
-									case Action::move:
+									case MouseAction::move:
 									{
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
-									case Action::leftClick:
+									case MouseAction::leftClick:
 									{
 										mouse.leftClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
-									case Action::rightClick:
+									case MouseAction::rightClick:
 									{
 										mouse.rightClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
-									case Action::middleClick:
+									case MouseAction::middleClick:
 									{
 										mouse.middleClick();
 										waylandState.shouldActionAndExit = true;
 										break;
 									}
-									case Action::leftDrag:
+									case MouseAction::leftDrag:
 									{
 										if(dragActionMouseDown)
 										{
@@ -1399,12 +1458,19 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 										} else
 										{
 											mouse.leftDown();
-											resetDrawGridFrameVariables(waylandState);
+											resetDrawFrameVariables(waylandState);
+											if(waylandState.displayMode == DisplayMode::buttonDetection)
+											{
+												drawInitialButtonDetectionFrame(&waylandState);
+											} else if(waylandState.displayMode == DisplayMode::grid)
+											{
+												drawNthInitialGridFrame(&waylandState);
+											}
 										}
 										dragActionMouseDown = !dragActionMouseDown;
 										break;
 									}
-									case Action::rightDrag:
+									case MouseAction::rightDrag:
 									{
 										if(dragActionMouseDown)
 										{
@@ -1413,12 +1479,19 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 										} else
 										{
 											mouse.rightDown();
-											resetDrawGridFrameVariables(waylandState);
+											resetDrawFrameVariables(waylandState);
+											if(waylandState.displayMode == DisplayMode::buttonDetection)
+											{
+												drawInitialButtonDetectionFrame(&waylandState);
+											} else if(waylandState.displayMode == DisplayMode::grid)
+											{
+												drawNthInitialGridFrame(&waylandState);
+											}
 										}
 										dragActionMouseDown = !dragActionMouseDown;
 										break;
 									}
-									case Action::middleDrag:
+									case MouseAction::middleDrag:
 									{
 										if(dragActionMouseDown)
 										{
@@ -1427,26 +1500,30 @@ void keyboardMouse(std::string targetMonitorName, Action action, bool displayGri
 										} else
 										{
 											mouse.middleDown();
-											resetDrawGridFrameVariables(waylandState);
+											resetDrawFrameVariables(waylandState);
+											if(waylandState.displayMode == DisplayMode::buttonDetection)
+											{
+												drawInitialButtonDetectionFrame(&waylandState);
+											} else if(waylandState.displayMode == DisplayMode::grid)
+											{
+												drawNthInitialGridFrame(&waylandState);
+											}
 										}
 										dragActionMouseDown = !dragActionMouseDown;
 										break;
 									}
 								}
-							} else
+							} else if(waylandState.displayMode == DisplayMode::grid)
 							{
 								waylandState.drawArea = waylandState.letterCombinationsToClickTargets.at(waylandState.userKeyboardInput).rectangle;
-								waylandState.userKeyboardInput.clear();
-								waylandState.shouldRedrawGridFrame = true;
+								bool resetGridDrawAreaResizeCount = false;
+								resetDrawFrameVariables(waylandState, resetGridDrawAreaResizeCount);
+								bool increment = true;
+								drawNthInitialGridFrame(&waylandState, increment);
 							}
 						}
 						break;
 					}
-				}
-			} else
-			{
-				switch(inputEvent.code)
-				{
 				}
 			}
 		}
@@ -1690,7 +1767,7 @@ int main(int argc, char** argv)
 						if(previousAltclickToCurrentAltClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, Action::leftClick, true, keyboardFileDescriptor, configFilePath); //opencv
+							keyboardMouse(targetMonitorName, MouseAction::leftDrag, DisplayMode::grid, keyboardFileDescriptor, configFilePath); //opencv
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousAltClickTime = currentAltClickTime;
@@ -1704,7 +1781,7 @@ int main(int argc, char** argv)
 						if(previousShiftclickToCurrentShiftClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, Action::leftClick, false, keyboardFileDescriptor, configFilePath); //opencv
+							keyboardMouse(targetMonitorName, MouseAction::leftDrag, DisplayMode::buttonDetection, keyboardFileDescriptor, configFilePath); //opencv
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousShiftClickTime = currentShiftClickTime;

@@ -8,6 +8,21 @@ A project inspired by:
 - [mouseless](https://youtu.be/J0rwQVNQkHM?si=v2O7zazIbpw5QAaJ)
 - [neverclick](https://www.youtube.com/watch?v=7fGB-hjc2Gc&t=2h00m55s)
 
+
+# Limitations and other important notes
+
+## Multiple monitors breaks daemon
+as of Sunday, January 25, 2026, 00:32:31
+AbsolutePointer struggles to do anything useful once a second monitor is plugged in, thus this is a single monitor setup only application
+
+## Single user mode only
+Only works in single user mode. Having any other users logged in and clogging the `/run/user/` directory will break the daemon as of Sunday, January 25, 2026, 15:39:46
+
+## keyd (key remappers)
+Keyboard remappers such as [keyd](https://github.com/rvaiya/keyd) "eat" all available keyboards via an `EVIOCGRAB` call,
+and thus the `/etc/keyboardMouse/keyboardTarget.txt` config file must be specified as `keyd virtual keyboard` instead of your regular keyboard name
+
+
 # Resources, documentation, and reference material used to help me build this project
 
 - [wayland-book](https://wayland-book.com/introduction.html) for helping me get started on anything wayland client related
@@ -22,6 +37,7 @@ A project inspired by:
     - [xdg-output-unstable-v1](https://wayland.app/protocols/xdg-output-unstable-v1)
 - [grim](https://gitlab.freedesktop.org/emersion/grim) for showing me how to do zwlr_screencopy_manager_v1 stuff
 - [tofi](https://github.com/philj56/tofi) and [fuzzel](https://codeberg.org/dnkl/fuzzel) for showing me how to draw things wayland-client related
+- [keyd](https://github.com/rvaiya/keyd) for reference material on how to write systemd service script
 - [YouTube](https://www.youtube.com/)
     - Wayland related
         - [Wayland client basics How to natively speak Wayland in your application, from the bottom up](https://www.youtube.com/watch?v=KbryyNrMYl4)
@@ -32,6 +48,8 @@ A project inspired by:
     - OpenCV related
         - [Object Detection using HSV Color Space [C++/OpenCV]](https://www.youtube.com/watch?v=vIrmMAib7Go)
         - [How I animate stuff on Desmos Graphing Calculator](https://www.youtube.com/watch?v=BQvBq3K50u8&t=4m21s)
+    - Systemd related
+        - [Systemd: setup a simple systemd service on Linux](https://www.youtube.com/watch?v=43R8wyCFOPA)
 - [OpenCV forums "how to group contours in close proximity to each other"](https://forum.opencv.org/t/how-to-group-contours-in-close-proximity-to-each-other/1719)
 - [OpenCV Documentation dilation](https://docs.opencv.org/4.x/d4/d86/group__imgproc__filter.html#ga4ff0f3318642c4f469d0e11f242f3b6c)
 - [OpenCV Documentation Morphological Transformations](https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html)
@@ -40,7 +58,10 @@ A project inspired by:
     - [Linux: Canceling input from /dev/input/event\*](https://stackoverflow.com/questions/68713392/linux-canceling-input-from-dev-input-event) for showing me how to 'eat' key events
     - [input\_event structure description (from linux/input.h)](https://stackoverflow.com/questions/16695432/input-event-structure-description-from-linux-input-h)
     - [Why does \`ioctl(fd, EVIOCGRAB, 1)\` cause key spam sometimes?](https://stackoverflow.com/questions/41995349/why-does-ioctlfd-eviocgrab-1-cause-key-spam-sometimes) for giving me ideas on how to work around this
+    - [Where should a shell script for a custom systemd service be installed?](https://unix.stackexchange.com/questions/691145/where-should-a-shell-script-for-a-custom-systemd-service-be-installed) for clarification on where systemd service files should be installed
 - [Linux Kernel Documentation, Input event codes](https://docs.kernel.org/input/event-codes.html) for documentation on evdev and other related stuff
+- [Red Hat Documentation | Working with systemd unit files](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/using_systemd_unit_files_to_customize_and_optimize_your_system/assembly_working-with-systemd-unit-files_working-with-systemd) for documentation on creating systemd service script
+
 
 # Please view only
 

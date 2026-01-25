@@ -1127,7 +1127,7 @@ std::unordered_map<uint32_t, char> inputEventCodeToAscii =
 };
 
 static Mouse mouse; //chromium doesn't register mouse on fly fast enough or something of the sort, as of Wednesday, January 21, 2026, 11:33:52
-void keyboardMouse(std::string targetMonitorName, DisplayMode displayMode, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
+void keyboardMouse(DisplayMode displayMode, int keyboardFileDescriptor, const std::filesystem::path& configFilePath)
 {
 	WaylandState waylandState;
 	waylandState.displayMode = displayMode;
@@ -1266,7 +1266,7 @@ void keyboardMouse(std::string targetMonitorName, DisplayMode displayMode, int k
 	if(!waylandState.display)
 	{
 		std::cerr << "failed to connect to waylandDisplay" << std::endl;
-		exit(EXIT_FAILURE);
+		return;
 	}
 
 	waylandState.registry = wl_display_get_registry(waylandState.display);
@@ -1287,45 +1287,24 @@ void keyboardMouse(std::string targetMonitorName, DisplayMode displayMode, int k
 	wl_display_roundtrip(waylandState.display); //process globals and listeners, send zxdg_output_v1_add_listener
 	wl_display_roundtrip(waylandState.display); //process dones
 
-	bool foundNamedMonitor = false;
-	for(size_t x = 0; x < waylandState.outputsNames.size(); ++x)
+	if(waylandState.outputs.empty())
 	{
-		if(waylandState.outputsNames[x] == targetMonitorName)
-		{
-			foundNamedMonitor = true;
-			waylandState.mouseXOrigin = waylandState.outputsPositions[x].x;
-			waylandState.mouseYOrigin = waylandState.outputsPositions[x].y;
-			waylandState.selectedOutput = waylandState.outputs[x];
-			waylandState.selectedOutputName = waylandState.outputsNames[x];
-			waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled[x];
-			waylandState.selectedOutputDimensionNotScaled = waylandState.outputsDimensionsNotScaled[x];
-			waylandState.selectedOutputScale = static_cast<double>(waylandState.selectedOutputDimensionNotScaled.width) / waylandState.selectedOutputDimensionScaled.width;
-			break;
-		}
-	}
-	if(!foundNamedMonitor)
-	{
-		std::cerr << "failed to find monitor named \"" << targetMonitorName << "\"!" << std::endl;
-		waylandState.mouseXOrigin = waylandState.outputsPositions[0].x;
-		waylandState.mouseYOrigin = waylandState.outputsPositions[0].y;
-		waylandState.selectedOutput = waylandState.outputs[0];
-		waylandState.selectedOutputName = waylandState.outputsNames[0];
-		waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled[0];
-		waylandState.selectedOutputDimensionNotScaled = waylandState.outputsDimensionsNotScaled[0];
-		waylandState.selectedOutputScale = static_cast<double>(waylandState.selectedOutputDimensionNotScaled.width) / waylandState.selectedOutputDimensionScaled.width;
+		std::cerr << "failed to get output!" << std::endl;
+		exit(EXIT_FAILURE);
 	}
 
-	for(size_t x = 0; x < waylandState.outputsDimensionsScaled.size(); x++)
-	{
-		if(waylandState.outputsPositions[x].x + waylandState.outputsDimensionsScaled[x].width > waylandState.mouseXExtent)
-		{
-			 waylandState.mouseXExtent = waylandState.outputsPositions[x].x + waylandState.outputsDimensionsScaled[x].width;
-		}
-		if(waylandState.outputsPositions[x].y + waylandState.outputsDimensionsScaled[x].height > waylandState.mouseYExtent)
-		{
-			 waylandState.mouseYExtent = waylandState.outputsPositions[x].y + waylandState.outputsDimensionsScaled[x].height;
-		}
-	}
+	waylandState.mouseXOrigin = waylandState.outputsPositions.at(0).x;
+	waylandState.mouseYOrigin = waylandState.outputsPositions.at(0).y;
+	waylandState.selectedOutput = waylandState.outputs.at(0);
+	waylandState.selectedOutputName = waylandState.outputsNames.at(0);
+	waylandState.selectedOutputDimensionScaled = waylandState.outputsDimensionsScaled.at(0);
+	waylandState.selectedOutputDimensionNotScaled = waylandState.outputsDimensionsNotScaled.at(0);
+	waylandState.selectedOutputScale = static_cast<double>(waylandState.selectedOutputDimensionNotScaled.width) / waylandState.selectedOutputDimensionScaled.width;
+
+
+	waylandState.mouseXExtent = waylandState.selectedOutputDimensionScaled.width;
+	waylandState.mouseYExtent = waylandState.selectedOutputDimensionScaled.height;
+
 	AbsolutePointer absolutePointer(waylandState.mouseXOrigin, waylandState.mouseXExtent, waylandState.mouseYOrigin, waylandState.mouseYExtent);
 
 	waylandState.layerSurfaceShouldClose = false;
@@ -1738,16 +1717,9 @@ void keyboardMouse(std::string targetMonitorName, DisplayMode displayMode, int k
 	}
 }
 
-int main(int argc, char** argv)
+int main()
 {
-	std::string targetMonitorName;
-	if(argc >= 2)
-	{
-		targetMonitorName = argv[1];
-	}
-
-	const std::filesystem::path keyboardMouseRootDir(getenv("keyboardMouseRootDir"));
-	const std::filesystem::path datFolderFilePath(keyboardMouseRootDir / "dat/");
+	const std::filesystem::path datFolderFilePath("/etc/keyboardMouse/");
 	const std::filesystem::path keyboardTargetTextFilePath(datFolderFilePath / "keyboardTarget.txt");
 	const std::filesystem::path configFilePath(datFolderFilePath / "config.txt");
 	const std::filesystem::path eventDeviceFolderPath("/dev/input/");
@@ -1755,7 +1727,6 @@ int main(int argc, char** argv)
 	if(!std::filesystem::exists(datFolderFilePath))
 	{
 		std::cerr << datFolderFilePath << " doesn't exist! creating " << datFolderFilePath << " folder..." << std::endl;
-		return -1;
 		if(!std::filesystem::create_directory(datFolderFilePath))
 		{
 			std::cerr << "failed to create " << datFolderFilePath << " folder! aborting!" << std::endl;
@@ -1899,7 +1870,7 @@ int main(int argc, char** argv)
 						if(previousAltclickToCurrentAltClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, DisplayMode::grid, keyboardFileDescriptor, configFilePath);
+							keyboardMouse(DisplayMode::grid, keyboardFileDescriptor, configFilePath);
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousAltClickTime = currentAltClickTime;
@@ -1913,7 +1884,7 @@ int main(int argc, char** argv)
 						if(previousShiftclickToCurrentShiftClickDurationMilliseconds <= doubleClickkMillisecondsThreshold)
 						{
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 1); //grab
-							keyboardMouse(targetMonitorName, DisplayMode::buttonDetection, keyboardFileDescriptor, configFilePath);
+							keyboardMouse(DisplayMode::buttonDetection, keyboardFileDescriptor, configFilePath);
 							ioctl(keyboardFileDescriptor, EVIOCGRAB, 0); //ungrab
 						}
 						previousShiftClickTime = currentShiftClickTime;

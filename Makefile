@@ -29,6 +29,17 @@ build/wlr-screencopy-unstable-v1.o: src/wlr-screencopy-unstable-v1.c
 build/xdg-output-unstable-v1.o: src/xdg-output-unstable-v1.c
 	clang $(CFLAGS) -c -o $@ $^
 
+.PHONY: install startService
+install: keyboardMouse
+	sudo systemctl stop keyboardMouse
+	sudo cp -v keyboardMouse.service /etc/systemd/system/keyboardMouse.service
+	sudo cp -v keyboardMouse /bin/keyboardMouse
+	sudo systemctl daemon-reload
+
+startService:
+	sudo systemctl start keyboardMouse
+	systemctl status keyboardMouse
+
 .PHONY: opencv
 opencv: testing/opencv.cpp
 	clang++ -Wall -std=c++17 -g -lopencv_core -lopencv_highgui -lopencv_imgcodecs -lopencv_imgproc -o opencv testing/opencv.cpp

@@ -1,7 +1,0 @@
-#!/bin/env bash
-
-#focusedMonitor="$(hyprctl monitors all | grep -P 'focused: yes|Monitor' | grep -B1 'focused: yes' | sed '2,2d' | awk '{ print $2 }')"
-focusedMonitor="test"
-cd $(dirname $0)
-
-pidof keyboardMouse || sudo keyboardMouseRootDir=$PWD ./keyboardMouse "$focusedMonitor"

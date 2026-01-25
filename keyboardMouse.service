@@ -1,0 +1,9 @@
+[Unit]
+Description=tool to control the mouse via keyboard
+
+[Service]
+Type=simple
+ExecStart=/bin/keyboardMouse
+
+[Install]
+WantedBy=multi-user.target

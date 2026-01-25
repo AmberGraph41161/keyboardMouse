@@ -589,7 +589,7 @@ void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 			waylandState->openCVFontThickness
 		);
 
-		waylandState->letterCombinationsToClickTargets[letterCombination] = ClickTarget
+		ClickTarget clickTarget
 		{
 			.rectangle = boundingRects[x],
 			.scalar = waylandState->openCVRectangleScalar,
@@ -601,71 +601,15 @@ void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 			.letterCombination = letterCombination
 		};
 
+		waylandState->letterCombinationsToClickTargets[letterCombination] = clickTarget;
+		for(size_t y = 1; y < letterCombination.size(); ++y)
+		{
+			waylandState->layeredLetterCombinationsToClickTargets[letterCombination.substr(0, y)].emplace_back(clickTarget);
+		}
+
+
 		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar, 50);
-	}
-}
-
-void drawGridFrame(WaylandState* waylandState)
-{
-	std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
-	cv::Mat drawMat
-	(
-		waylandState->sharedMemoryHeight,
-		waylandState->sharedMemoryWidth,
-		CV_8UC4,
-		waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize,
-		waylandState->sharedMemoryStride
-	);
-
-	std::vector<ClickTarget> clickTargets;
-	for
-	(
-		std::unordered_map<std::string, ClickTarget>::iterator it = waylandState->letterCombinationsToClickTargets.begin();
-		it != waylandState->letterCombinationsToClickTargets.end();
-		++it
-	)
-	{
-		clickTargets.emplace_back((*it).second);
-	}
-
-	for(size_t x = 0; x < clickTargets.size(); ++x)
-	{
-		cv::rectangle
-		(
-			drawMat,
-			clickTargets[x].rectangle.tl(),
-			clickTargets[x].rectangle.br(),
-			clickTargets[x].scalar,
-			waylandState->openCVRectangleThickness
-		);
-
-		cv::Point boundingRectBottomLeft
-		(
-			clickTargets[x].rectangle.tl().x + waylandState->openCVRectangleThickness,
-			clickTargets[x].rectangle.br().y - waylandState->openCVRectangleThickness
-		);
-
-		cv::putText
-		(
-			drawMat,
-			clickTargets[x].letterCombination,
-			boundingRectBottomLeft,
-			cv::FONT_HERSHEY_SIMPLEX,
-			waylandState->openCVFontScale,
-			clickTargets[x].scalar,
-			waylandState->openCVFontShadowThickness
-		);
-		cv::putText
-		(
-			drawMat,
-			clickTargets[x].letterCombination,
-			boundingRectBottomLeft,
-			cv::FONT_HERSHEY_SIMPLEX,
-			waylandState->openCVFontScale,
-			waylandState->openCVTextScalar,
-			waylandState->openCVFontThickness
-		);
 	}
 }
 
@@ -799,7 +743,7 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 	}
 }
 
-void drawButtonDetectionFrame(WaylandState* waylandState)
+void drawLayeredLetterCombinationsToClickTargetsFrame(WaylandState* waylandState)
 {
 	std::memset(waylandState->sharedMemoryPoolData + waylandState->sharedMemoryFrameSize, 0, waylandState->sharedMemoryFrameSize);
 	cv::Mat drawMat
@@ -1031,13 +975,7 @@ void layerSurfaceCallback(void* data, wl_callback* callback, uint32_t time) //bo
 	callback = wl_surface_frame(waylandState->surface);
 	wl_callback_add_listener(callback, &layerSurfaceCallbackListener, waylandState);
 
-	if(waylandState->displayMode == DisplayMode::grid)
-	{
-		drawGridFrame(waylandState);
-	} else if(waylandState->displayMode == DisplayMode::buttonDetection)
-	{
-		drawButtonDetectionFrame(waylandState);
-	}
+	drawLayeredLetterCombinationsToClickTargetsFrame(waylandState);
 	drawFrame(waylandState);
 	wl_surface_attach(waylandState->surface, waylandState->buffer, 0, 0);
 	wl_surface_damage(waylandState->surface, 0, 0, waylandState->sharedMemoryWidth, waylandState->sharedMemoryHeight);

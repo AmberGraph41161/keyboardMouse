@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <fstream>
 #include <filesystem>
+#include <sstream>
 
 #include <opencv4/opencv2/core/types.hpp>
 #include <opencv4/opencv2/core.hpp>
@@ -217,7 +218,7 @@ struct WaylandState
 	std::unordered_map<std::string, ClickTarget> letterCombinationsToClickTargets;
 	cv::Rect drawArea;
 	int drawAreaResizeCount = 0;
-	std::array<int, 3> drawResizeDivisorFromNthDraw = { 8, 8, 2 };
+	std::vector<unsigned int> drawResizeDivisorFromNthDraw = { 8, 8, 2 };
 };
 
 void waylandBufferRelease(void* data, wl_buffer* buffer)
@@ -519,8 +520,22 @@ void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 		waylandState->sharedMemoryStride
 	);
 
-	uint32_t gridBoxHeight = waylandState->drawArea.height / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
-	uint32_t gridBoxWidth = waylandState->drawArea.width / waylandState->drawResizeDivisorFromNthDraw[waylandState->drawAreaResizeCount];
+	unsigned int drawResizeDivisorFromNthDraw = waylandState->drawResizeDivisorFromNthDraw.at(waylandState->drawAreaResizeCount);
+	if(drawResizeDivisorFromNthDraw == 0)
+	{
+		drawResizeDivisorFromNthDraw = 1;
+	}
+
+	uint32_t gridBoxHeight = waylandState->drawArea.height / drawResizeDivisorFromNthDraw;
+	uint32_t gridBoxWidth = waylandState->drawArea.width / drawResizeDivisorFromNthDraw;
+	if(gridBoxHeight == 0)
+	{
+		gridBoxHeight = 1;
+	}
+	if(gridBoxWidth == 0)
+	{
+		gridBoxWidth = 1;
+	}
 
 	std::vector<cv::Rect> boundingRects;
 	for
@@ -1015,6 +1030,46 @@ void waylandRegistryHandleGlobalRemove(void* data, wl_registry* registry, uint32
 	//"intentionally left blank"
 }
 
+std::vector<unsigned int> stringToUnsignedIntVector(std::string inputString)
+{
+	std::vector<unsigned int> unsignedIntVector;
+	std::stringstream inputStringStream(inputString);
+	std::string getlinestring;
+	while(std::getline(inputStringStream, getlinestring, ' '))
+	{
+		try
+		{
+			unsigned int uint = std::stoul(getlinestring);
+			unsignedIntVector.push_back(uint);
+		} catch(...)
+		{
+			//noop
+		}
+	}
+
+	if(unsignedIntVector.empty())
+	{
+		throw "bad stringToIntVector!";
+	}
+
+	return unsignedIntVector;
+}
+
+std::string unsignedIntVectorToString(std::vector<unsigned int>& inputVector)
+{
+	std::string returnString;
+	returnString.reserve(inputVector.size() * 2);
+	for(int x = 0; x < inputVector.size(); ++x)
+	{
+		returnString += std::to_string(inputVector.at(x));
+		if(x + 1 < inputVector.size())
+		{
+			returnString += ' ';
+		}
+	}
+	return returnString;
+}
+
 void setXDG_RUNTIME_DIR()
 {
 	/* as of Thursday, January 22, 2026, 12:13:49
@@ -1086,15 +1141,6 @@ void keyboardMouse(DisplayMode displayMode, int keyboardFileDescriptor, const st
 				getlinestring = getlinestring.substr(0, getlinestring.find('#'));
 			}
 
-			for(size_t x = 0; x < getlinestring.size(); x++)
-			{
-				if(getlinestring.at(x) == ' ' || getlinestring.at(x) == '\t')
-				{
-					getlinestring.erase(getlinestring.begin() + x);
-					--x;
-				}
-			}
-
 			if(getlinestring.size() == 0)
 			{
 				continue;
@@ -1121,6 +1167,11 @@ void keyboardMouse(DisplayMode displayMode, int keyboardFileDescriptor, const st
 				std::pair<std::string, double&>("openCVFontScale", waylandState.openCVFontScale),
 				std::pair<std::string, double&>("openCVFontUserInputScale", waylandState.openCVFontUserInputScale),
 				std::pair<std::string, double&>("openCVFontDrawTextScale", waylandState.openCVFontDrawTextScale)
+			};
+
+			std::array<std::pair<std::string, std::vector<unsigned int>&>, 1> stringUnsignedIntVectorValuePairs =
+			{
+				std::pair<std::string, std::vector<unsigned int>&>("drawResizeDivisorFromNthDraw", waylandState.drawResizeDivisorFromNthDraw)
 			};
 
 			bool getlineWasEvaluated = false;
@@ -1175,6 +1226,29 @@ void keyboardMouse(DisplayMode displayMode, int keyboardFileDescriptor, const st
 					getlineWasEvaluated = true;
 					break;
 				}
+			}
+			if(getlineWasEvaluated)
+			{
+				continue;
+			}
+
+			for(int x = 0; x < stringUnsignedIntVectorValuePairs.size(); ++x)
+			{
+				const std::string& currentString = stringUnsignedIntVectorValuePairs.at(x).first;
+				std::string valueAsString = getlinestring.substr(getlinestring.find(currentString) + currentString.size());
+				try
+				{
+					std::vector<unsigned int>& unsingedIntVectorRef = stringUnsignedIntVectorValuePairs.at(x).second;
+					unsingedIntVectorRef = stringToUnsignedIntVector(valueAsString);
+					std::cout << "set \"" << currentString << "\" = " << unsignedIntVectorToString(unsingedIntVectorRef) << std::endl;
+				} catch(...)
+				{
+					std::cerr << "error reading string unsinged int vector value pair! expected unsigned int vector but got: ";
+					std::cerr << currentString << " = " << valueAsString << std::endl;
+				}
+
+				getlineWasEvaluated = true;
+				break;
 			}
 			if(getlineWasEvaluated)
 			{

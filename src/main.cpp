@@ -1731,6 +1731,12 @@ void keyboardMouse(DisplayMode displayMode, int keyboardFileDescriptor, const st
 
 int main()
 {
+	if(geteuid() != 0)
+	{
+		std::cerr << "must be run with root level perms!" << std::endl;
+		exit(EXIT_FAILURE);
+	}
+
 	const std::filesystem::path datFolderFilePath("/etc/keyboardMouse/");
 	const std::filesystem::path keyboardTargetTextFilePath(datFolderFilePath / "keyboardTarget.txt");
 	const std::filesystem::path configFilePath(datFolderFilePath / "config.txt");

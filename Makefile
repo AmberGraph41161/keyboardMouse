@@ -29,7 +29,7 @@ build/wlr-screencopy-unstable-v1.o: src/wlr-screencopy-unstable-v1.c
 build/xdg-output-unstable-v1.o: src/xdg-output-unstable-v1.c
 	clang $(CFLAGS) -c -o $@ $^
 
-.PHONY: install startService
+.PHONY: install startService stopService
 install: keyboardMouse
 	sudo systemctl stop keyboardMouse
 	sudo cp -v src/keyboardMouse.service /etc/systemd/system/keyboardMouse.service
@@ -38,6 +38,10 @@ install: keyboardMouse
 
 startService:
 	sudo systemctl start keyboardMouse
+	systemctl status keyboardMouse
+
+stopService:
+	sudo systemctl stop keyboardMouse
 	systemctl status keyboardMouse
 
 .PHONY: opencv

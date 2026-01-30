@@ -7,6 +7,17 @@ A project inspired by:
 - [KeyNav](https://youtu.be/Uot3Cs9YwOA?si=AsGqJGUqo0MNpQzo)
 - [mouseless](https://youtu.be/J0rwQVNQkHM?si=v2O7zazIbpw5QAaJ)
 - [neverclick](https://www.youtube.com/watch?v=7fGB-hjc2Gc&t=2h00m55s)
+- [vimium](https://vimium.github.io/)
+
+## Basic demo
+
+![basicDemo](md/basicDemo.gif)
+
+![gtkApp](md/gtkApp.gif)
+
+![leftDrag](md/leftDrag.gif)
+
+![textSelection](md/textSelection.gif)
 
 
 # Limitations and other important notes
@@ -37,6 +48,9 @@ and thus the `/etc/keyboardMouse/keyboardTarget.txt` config file must be specifi
 Since the daemon runs at the root level, it isn't aware of your user level Wayland compositor environment variables such as `$XDG_RUNTIME_DIR` and `$WAYLAND_DISPLAY`.
 Thus the daemon simply "guesses" the common values for said environment variables before launching.
 There is a chance that this daemon just doesn't launch it's graphical component at all because of this.
+
+## Unable to interact with GTK system-tray apps from waybar
+as of Friday, January 30, 2026, 14:07:21, no idea why
 
 
 # Building and Installation

@@ -11,6 +11,9 @@ A project inspired by:
 
 # Limitations and other important notes
 
+## Disclaimer
+This software is provided "as is", without warranty of any kind.
+
 ## Single-monitor Single-user (ideally a laptop setup)
 as of Sunday, January 25, 2026, 00:32:31, AbsolutePointer struggles to do anything useful once a second monitor is plugged in, thus this is a single monitor setup only application
 
@@ -34,6 +37,54 @@ and thus the `/etc/keyboardMouse/keyboardTarget.txt` config file must be specifi
 Since the daemon runs at the root level, it isn't aware of your user level Wayland compositor environment variables such as `$XDG_RUNTIME_DIR` and `$WAYLAND_DISPLAY`.
 Thus the daemon simply "guesses" the common values for said environment variables before launching.
 There is a chance that this daemon just doesn't launch it's graphical component at all because of this.
+
+
+# Building and Installation
+
+## Prerequisites
+make sure you have the following packages/libs/dependencies installed before trying to build:
+```shell
+sudo pacman -S opencv wayland base-devel
+```
+
+If you are on Arch Linux, be aware that as of Friday, January 30, 2026, 13:14:07,
+the `opencv` package still has [this weird lib path issue](https://github.com/opencv/opencv/issues/5989#issuecomment-533148178) where `opencv` does not link properly.
+You can fix this via doing something like:
+```shell
+sudo ln -s /usr/include/opencv4/opencv2 /usr/include/opencv2
+```
+
+## Installation
+First build the project by running:
+```shell
+make
+```
+
+
+Next, populate your `/etc/keyboardMouse/keyboardTarget.txt` file with the name of your target keyboard.
+Note that [key re-mappers might block your target keyboard](#keyd-key-remappers).
+If you don't know what the name of your keyboard is, you can simply run `sudo ./keyboardMouse` and let the program fail and print all currently connected keyboard names.
+
+
+If you just want to run the program regularly in the background of your shell, run:
+```shell
+sudo ./keyboardMouse &
+```
+
+
+If you want to run the program as a Systemd service, and have it install itself in `/etc/keyboardMouse` and `/bin/` and `/etc/systemd/system/keyboardMouse.service`,
+you can run:
+```shell
+make install
+```
+and start the service via:
+```shell
+make startService
+```
+or by running;
+```shell
+sudo systemctl daemon-reload && sudo systemctl start keyboardMouse
+```
 
 
 # Resources, documentation, and reference material used to help me build this project

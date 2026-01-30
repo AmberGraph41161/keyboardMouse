@@ -32,7 +32,7 @@ build/xdg-output-unstable-v1.o: src/xdg-output-unstable-v1.c
 .PHONY: install startService
 install: keyboardMouse
 	sudo systemctl stop keyboardMouse
-	sudo cp -v keyboardMouse.service /etc/systemd/system/keyboardMouse.service
+	sudo cp -v src/keyboardMouse.service /etc/systemd/system/keyboardMouse.service
 	sudo cp -v keyboardMouse /bin/keyboardMouse
 	sudo systemctl daemon-reload
 

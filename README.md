@@ -11,16 +11,29 @@ A project inspired by:
 
 # Limitations and other important notes
 
-## Multiple monitors breaks daemon
-as of Sunday, January 25, 2026, 00:32:31
-AbsolutePointer struggles to do anything useful once a second monitor is plugged in, thus this is a single monitor setup only application
+## Single-monitor Single-user (ideally a laptop setup)
+as of Sunday, January 25, 2026, 00:32:31, AbsolutePointer struggles to do anything useful once a second monitor is plugged in, thus this is a single monitor setup only application
 
-## Single user mode only
 Only works in single user mode. Having any other users logged in and clogging the `/run/user/` directory will break the daemon as of Sunday, January 25, 2026, 15:39:46
 
-## keyd (key remappers)
-Keyboard remappers such as [keyd](https://github.com/rvaiya/keyd) "eat" all available keyboards via an `EVIOCGRAB` call,
-and thus the `/etc/keyboardMouse/keyboardTarget.txt` config file must be specified as `keyd virtual keyboard` instead of your regular keyboard name
+## Wayland unstable protocols
+This project was built upon ***unstable*** Wayland protocols that not every Wayland compositor supports, specifically:
+
+- [wlr-layer-shell-unstable-v1](https://wayland.app/protocols/wlr-layer-shell-unstable-v1), see [supported compositors for this protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support)
+- [wlr-screencopy-unstable-v1](https://wayland.app/protocols/wlr-screencopy-unstable-v1), see [supported compositors for this protocol](https://wayland.app/protocols/wlr-screencopy-unstable-v1#compositor-support)
+- [xdg-output-unstable-v1](https://wayland.app/protocols/xdg-output-unstable-v1), see [supported compositors for this protocol](https://wayland.app/protocols/xdg-output-unstable-v1#compositor-support)
+
+If you are on the latest version of [Hyprland](https://hypr.land/) as of Friday, January 30, 2026, 13:05:17 however, this project should run just fine.
+You can see if your Wayland compositor supports these ***unstable*** protocols or not in the links above.
+
+## keyd (key re-mappers)
+Keyboard re-mappers such as [keyd](https://github.com/rvaiya/keyd) "eat" all available keyboards via an `EVIOCGRAB` call,
+and thus the `/etc/keyboardMouse/keyboardTarget.txt` config file must be specified as `keyd virtual keyboard` instead of your regular keyboard name, otherwise the program won't detect any key presses
+
+## root isn't aware of your environment variables
+Since the daemon runs at the root level, it isn't aware of your user level Wayland compositor environment variables such as `$XDG_RUNTIME_DIR` and `$WAYLAND_DISPLAY`.
+Thus the daemon simply "guesses" the common values for said environment variables before launching.
+There is a chance that this daemon just doesn't launch it's graphical component at all because of this.
 
 
 # Resources, documentation, and reference material used to help me build this project

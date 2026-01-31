@@ -105,7 +105,8 @@ struct Position
 struct ClickTarget
 {
 	cv::Rect rectangle;
-	cv::Scalar scalar;
+	cv::Scalar rectangleScalar;
+	cv::Scalar textScalar;
 	cv::Point clickPoint;
 	std::string letterCombination;
 };
@@ -196,7 +197,7 @@ struct WaylandState
 	double openCVFontUserInputScale = 10;
 	double openCVFontDrawTextScale = 3;
 	cv::Scalar openCVRectangleScalar{0, 0, 255, 255}; //BGRA
-	cv::Scalar openCVTextScalar{0, 0, 0, 255};
+	cv::Scalar openCVTextScalar{255, 255, 0, 255};
 	unsigned int openCVRectangleThickness = 2;
 	/* https://docs.opencv.org/3.4/da/d5c/tutorial_canny_detector.html
 	Hysteresis: The final step. Canny does use two thresholds (upper and lower):
@@ -394,6 +395,13 @@ void incrementLetterCombination(std::string& letterCombination)
 			letterCombination[x] = 'A';
 		}
 	}
+}
+
+void invertScalarColor(cv::Scalar& input, cv::Scalar& output)
+{
+	output[2] = 255 - input[2];
+	output[1] = 255 - input[1];
+	output[0] = 255 - input[0];
 }
 
 void nextScalarColor(cv::Scalar& scalar, int incrementBy = 1)
@@ -607,7 +615,8 @@ void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 		ClickTarget clickTarget
 		{
 			.rectangle = boundingRects[x],
-			.scalar = waylandState->openCVRectangleScalar,
+			.rectangleScalar = waylandState->openCVRectangleScalar,
+			.textScalar = waylandState->openCVTextScalar,
 			.clickPoint = cv::Point
 			(
 				boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
@@ -625,6 +634,7 @@ void drawNthInitialGridFrame(WaylandState* waylandState, bool increment = false)
 
 		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar, 50);
+		invertScalarColor(waylandState->openCVRectangleScalar, waylandState->openCVTextScalar);
 	}
 }
 
@@ -737,7 +747,8 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 		ClickTarget clickTarget
 		{
 			.rectangle = boundingRects[x],
-			.scalar = waylandState->openCVRectangleScalar,
+			.rectangleScalar = waylandState->openCVRectangleScalar,
+			.textScalar = waylandState->openCVTextScalar,
 			.clickPoint = cv::Point
 			(
 				boundingRects[x].tl().x + ((boundingRects[x].br().x - boundingRects[x].tl().x) / 2),
@@ -755,6 +766,7 @@ void drawInitialButtonDetectionFrame(WaylandState* waylandState)
 
 		incrementLetterCombination(letterCombination);
 		nextScalarColor(waylandState->openCVRectangleScalar);
+		invertScalarColor(waylandState->openCVRectangleScalar, waylandState->openCVTextScalar);
 	}
 }
 
@@ -792,36 +804,36 @@ void drawLayeredLetterCombinationsToClickTargetsFrame(WaylandState* waylandState
 		cv::rectangle
 		(
 			drawMat,
-			clickTargets[x].rectangle.tl(),
-			clickTargets[x].rectangle.br(),
-			clickTargets[x].scalar,
+			clickTargets.at(x).rectangle.tl(),
+			clickTargets.at(x).rectangle.br(),
+			clickTargets.at(x).rectangleScalar,
 			waylandState->openCVRectangleThickness
 		);
 
 		cv::Point boundingRectBottomLeft
 		(
-			clickTargets[x].rectangle.tl().x + waylandState->openCVRectangleThickness,
-			clickTargets[x].rectangle.br().y - waylandState->openCVRectangleThickness
+			clickTargets.at(x).rectangle.tl().x + waylandState->openCVRectangleThickness,
+			clickTargets.at(x).rectangle.br().y - waylandState->openCVRectangleThickness
 		);
 
 		cv::putText
 		(
 			drawMat,
-			clickTargets[x].letterCombination,
+			clickTargets.at(x).letterCombination,
 			boundingRectBottomLeft,
 			cv::FONT_HERSHEY_SIMPLEX,
 			waylandState->openCVFontScale,
-			clickTargets[x].scalar,
+			clickTargets.at(x).rectangleScalar,
 			waylandState->openCVFontShadowThickness
 		);
 		cv::putText
 		(
 			drawMat,
-			clickTargets[x].letterCombination,
+			clickTargets.at(x).letterCombination,
 			boundingRectBottomLeft,
 			cv::FONT_HERSHEY_SIMPLEX,
 			waylandState->openCVFontScale,
-			waylandState->openCVTextScalar,
+			clickTargets.at(x).textScalar,
 			waylandState->openCVFontThickness
 		);
 	}

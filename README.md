@@ -52,6 +52,10 @@ There is a chance that this daemon just doesn't launch it's graphical component 
 ## Unable to interact with GTK system-tray apps from waybar
 as of Friday, January 30, 2026, 14:07:21, no idea why
 
+## Chromium doesn't like the virtual AbsolutePointer mouse
+as of Friday, January 30, 2026, 21:34:42, chromium still does not like the AbsolutePointer mouse,
+and will spontaneously "reject input" from it, 
+
 
 # Building and Installation
 

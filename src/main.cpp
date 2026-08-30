@@ -12,9 +12,10 @@
 #include <filesystem>
 #include <sstream>
 
-#include <opencv4/opencv2/core/types.hpp>
-#include <opencv4/opencv2/core.hpp>
-#include <opencv4/opencv2/imgproc.hpp>
+#include <opencv5/opencv2/core/types.hpp>
+#include <opencv5/opencv2/core.hpp>
+#include <opencv5/opencv2/imgproc.hpp>
+#include <opencv5/opencv2/geometry.hpp>
 
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>

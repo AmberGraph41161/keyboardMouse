@@ -1,6 +1,6 @@
 CFLAGS := -Wall -g
 CXXFLAGS := -Wall -std=c++17 -g
-CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc
+CXXLINKLIBS := -lwayland-client -lopencv_core -lopencv_imgproc -lopencv_geometry
 
 keyboardMouse: build/main.o build/virtualInputDevice.o build/mouse.o build/absolutePointer.o build/xdg-shell.o build/wlr-layer-shell-unstable-v1.o build/wlr-screencopy-unstable-v1.o build/xdg-output-unstable-v1.o
 	clang++ $(CXXFLAGS) $(CXXLINKLIBS) -o $@ $^

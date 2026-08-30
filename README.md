@@ -69,7 +69,7 @@ If you are on Arch Linux, be aware that as of Friday, January 30, 2026, 13:14:07
 the `opencv` package still has [this weird lib path issue](https://github.com/opencv/opencv/issues/5989#issuecomment-533148178) where `opencv` does not link properly.
 You can fix this via doing something like:
 ```shell
-sudo ln -s /usr/include/opencv4/opencv2 /usr/include/opencv2
+sudo ln -s /usr/include/opencv5/opencv2 /usr/include/opencv2
 ```
 
 ## Installation
